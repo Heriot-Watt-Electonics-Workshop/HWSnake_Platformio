@@ -1,7 +1,13 @@
-// Code by Will W from Electronics Workshop.
-// Improved upon original source from ANJAWARE.
-// https://www.instructables.com/Arduino-OLED-Snake-Game/
-// 15th November 2021
+// HWSnake game for 1st Year PRAXIS course @
+// Heriot Watt University, Edinburgh. Scotland
+// Build your own Arduino and OLED display shield.
+// Code by Will W from the EPS Electronics Workshop.
+// Version 1.0
+// 20th November 2021
+
+// Dependencies are the SSD1306 library from Adafruit.
+// and 'TimerInterrupt' by Khoi Hoang.
+// These can be installed from 'Tools/Manage Libraries' in the menubar above.
 
 
 #include <Adafruit_GFX.h>
@@ -23,7 +29,7 @@
 // If you want sound. U will need a buzzer.
 #define SOUND NO
 #if (SOUND == 0)
-	#define tone(x,y,z)
+	#define tone(x, y, z)
 #endif
 
 // This makes all debugging code disappear when DEBUG set to NO.
@@ -45,43 +51,6 @@
 #endif // DEBUG
 
 
-// All the directions you need.
-enum class Direction : uint8_t {
-	NONE, UP, DOWN, LEFT, RIGHT
-};
-
-
-// A point.
-struct Point
-#if (DEBUG == YES) 
-: public Printable	// Inheriting from printable can allow you to print() a point.
-#endif 
-{
-	Point() : y{0}, x{0} {}
-	Point(uint8_t y, uint8_t x) : y{y}, x{x} {}
-	uint8_t y, x;
-	// Does this point equal another point.
-	bool operator==(const Point& other) const { return (other.y == y && other.x == x); }
-#if (DEBUG == YES)
-	size_t printTo(Print& p) const {
-		char rVal[9];
-		sprintf(rVal, "(%u,%u)", x, y);
-		return p.print(rVal);
-	}
-#endif
-};
-
-
-namespace Display {
-
-	constexpr uint8_t Width 	{ 128 };
-	constexpr uint8_t Height 	{ 64 };
-	
-	// Initialize the display.
-	Adafruit_SSD1306 display( Width, Height );  
-}
-
-
 // The pin numbers.
 namespace Pin {
 
@@ -96,23 +65,67 @@ namespace Pin {
 }
 
 
+// All the directions you need.
+enum class Direction : uint8_t {
+	NONE, UP, DOWN, LEFT, RIGHT
+};
+
+
+// A point.
+struct Point
+#if (DEBUG == YES) 
+: public Printable	// Inheriting from printable can allow you to print() a point.
+#endif 
+{
+	Point() : y{0}, x{0} {}
+	Point(uint8_t y, uint8_t x) : y{y}, x{x} {}
+
+	// The coordinates
+	uint8_t y, x;
+
+	// Overide equality operator to compare points.
+	bool operator==(const Point& other) const { return (other.y == y && other.x == x); }
+
+#if (DEBUG == YES)
+	size_t printTo(Print& p) const {
+		char rVal[9];
+		sprintf(rVal, "(%u,%u)", x, y);
+		return p.print(rVal);
+	}
+#endif
+};
+
+
+namespace Display {
+
+	constexpr const uint8_t Width 	{ 128 };
+	constexpr const uint8_t Height 	{ 64 };
+	
+	// Initialize the display.
+	Adafruit_SSD1306 display( Width, Height );  
+}
+
+
 // The gameworld space.
 namespace World {
 
-	// How big you want things.
-	constexpr uint8_t Scale { 6 };
+	// How large in pixels do you want the game rows and columns to be.
+	constexpr const uint8_t Scale { 6 };
 
 	// Offsets top left and right.
-	constexpr uint8_t xMinOffset { 4 };
-	constexpr uint8_t xMaxOffset { 2 };
-	constexpr uint8_t yMinOffset { 12 };
-	constexpr uint8_t yMaxOffset { 2 };
+	constexpr const uint8_t xMinOffset { 4 };
+	constexpr const uint8_t xMaxOffset { 2 };
+	constexpr const uint8_t yMinOffset { 12 };
+	constexpr const uint8_t yMaxOffset { 2 };
 
 	// How big the world is.
-	constexpr uint8_t minX  { 0 };
-	constexpr uint8_t maxX  { (Display::Width - xMinOffset - xMaxOffset) / Scale };
-	constexpr uint8_t minY  { 0 };
-	constexpr uint8_t maxY  { (Display::Height - yMinOffset - yMaxOffset) / Scale };
+	constexpr const uint8_t minX  { 0 };
+	constexpr const uint8_t maxX  { (Display::Width - xMinOffset - xMaxOffset) / Scale };
+	constexpr const uint8_t minY  { 0 };
+	constexpr const uint8_t maxY  { (Display::Height - yMinOffset - yMaxOffset) / Scale };
+	
+	// Where the food is.
+	Point scranPos 		 { 0, 0 };
 
 	// Get a random point.  This is a C++ lambda function.
 	auto getRandomPoint { []() -> Point { 
@@ -120,13 +133,22 @@ namespace World {
 				 static_cast<uint8_t>( random(World::minX, World::maxX) ) }; 
 	}};
 
+	// Converts game coordinates to display coordinates.
 	auto toWorld { [](const Point& p) -> Point {
-		return { (p.y * Scale) + yMinOffset, (p.x * Scale) + xMinOffset };
+		return { static_cast<uint8_t>((p.y * Scale) + yMinOffset), static_cast<uint8_t>((p.x * Scale) + xMinOffset) };
 	}};
 }
 
-/// Generic RingBuffer and Iterators for the snake.
-template <typename T, uint8_t Size>
+// A ring buffer is a memory structure where a contiguous block of memory is allocated at one end
+// and de-allocated at the other.  At one point the memory loops around and starts again.  As the 
+// memory is filled the head will start to catch up with the tail and when it does the buffer is 
+// full.  Ring buffers are often used when data is transmitted and received such as with audio.
+// The snake in this game would seem to be suited to a ringbuffer.
+
+
+/// ->->->-> A RingBuffer and Iterators for the snake. <-<-<-<-
+
+template <typename T, uint8_t Size> // This is a C++ class template.  Only used functions are instantiated.
 class RingBuffer {
 
 static_assert(Size < 255, "Buffer too big.  This only takes up to 254.\n");
@@ -262,33 +284,34 @@ private:
 
 
 
-// The snake.  The body value is the maximum size of the snake.
+
+// The snake.
 //  There is not much RAM.  If you make this too big the game might crash.
 #if (DEBUG == YES)
 RingBuffer<Point, 35> snake;
 #else
-RingBuffer<Point, 70> snake;
+RingBuffer<Point, 72> snake; // This is the maximum length your snake can grow to.
 #endif
+
+
 
 namespace Snake {
 
-auto head = [](){ return snake.front(); };
-Direction direction { Direction::NONE };
+auto head = [](){ return snake.front(); };	// A lambda to return the head of the snake.
+Direction direction { Direction::NONE };	// The direction the snake is moving.
 
 }
 
-// Pressing the button sets this variable.
+// Pressing the button sets this variable.  It is volatile as it is updated from user input.
 volatile Direction lastDirectionPressed { Direction::NONE };
 
-// Food items.
-bool eatingScran 	 { false };
-Point scranPos 		 { 0, 0 };
 
-uint16_t playerScore { 0 };
+namespace Score {
 
-// Highscore is read from the EEPROM non-volatile memory.
-uint16_t highScore 	 { ((EEPROM.read(0) != 255) ? static_cast<uint16_t>(EEPROM.read(0) * 10) : 0) };
-
+	uint16_t current { 0 };
+	// Highscore is read from the EEPROM non-volatile memory.
+	uint16_t high 	 { ((EEPROM.read(0) != 255) ? static_cast<uint16_t>(EEPROM.read(0) * 10) : 0) };
+}
 
 
 // Define a button.
@@ -296,15 +319,17 @@ struct Button {
 
 	enum class State { pressed, notPressed };
 
+	constexpr static uint8_t readingPeriod_ms { 2 }; 	// Time between button reads.
+	constexpr static uint8_t triggerCount { 3 }; 		// Number of reads required to trigger a press. 
+
 	constexpr Button(uint8_t pin, Direction direction) : pin{ pin }, direction{ direction } {}
 
-// May need to be volatile..................
+	const uint8_t pin;			// The pin of the button.
+	const Direction direction;	// The direction the button represents.
+
 	mutable State state = State::notPressed;
 	mutable uint8_t pressedCount { 0 };
 	mutable uint8_t unPressedCount { 0 };
-
-	const uint8_t pin;
-	const Direction direction;
 };
 
 
@@ -324,17 +349,17 @@ namespace Buttons {
 // Sets the pace of the game.
 namespace Timing {
 
-	uint16_t gameUpdateTime_ms { 300 };
-	constexpr uint16_t gameUpdateTimeOnReset_ms { 300 };
-	unsigned long lastGameUpdatedTime { 0 };
-
-	constexpr uint8_t buttonReadTimeMillis { 2 };
-	constexpr uint8_t debounceCount { 2 };
+	uint16_t gameUpdateTime_ms { 300 };						// This decreases as you score points.
+	constexpr uint16_t gameUpdateTimeOnReset_ms { 300 };	// This is the value it resets to.
+	unsigned long lastGameUpdatedTime { 0 };				// A counter used in the loop.
 }
 
 
 
-// ----------------- Declarations ------------------
+
+
+
+// ------------ Function Declarations ------------
 
 /**
  * @brief Check if food eaten.
@@ -373,7 +398,7 @@ void drawARandomLine(uint8_t colour = WHITE);
 /**
  * @brief Draws the background for the game.
  */
-void drawDisplayBackground(bool partial = false);
+void drawDisplayBackground();
 
 
 /**
@@ -443,8 +468,7 @@ void setup() {
 	delay(Timing::gameUpdateTime_ms);
 
 	ITimer1.init();
-
-	if (ITimer1.attachInterruptInterval(Timing::buttonReadTimeMillis, readButtons)) {
+	if (ITimer1.attachInterruptInterval(Button::readingPeriod_ms, readButtons)) {
 		DEBUG_PRINTLN_FLASH("Timer attached successfully.");
 	}
 
@@ -498,14 +522,14 @@ void readButtons() {
   		if (!digitalRead(button->pin) ) {
     		button->unPressedCount = 0;
 
-			if (++button->pressedCount >= debounceCount / Timing::buttonReadTimeMillis) {
+			if (++button->pressedCount >= Button::triggerCount / Button::readingPeriod_ms) {
     
       			if (button->state != Button::State::pressed) {
 					lastDirectionPressed = button->direction;
         			button->state = Button::State::pressed;
     			}
     		}
-		} else if (button->state == Button::State::pressed && (++button->unPressedCount >= debounceCount / Timing::buttonReadTimeMillis)) {
+		} else if (button->state == Button::State::pressed && (++button->unPressedCount >= Button::triggerCount / Button::readingPeriod_ms)) {
 
 			button->state = Button::State::notPressed;
       		button->pressedCount = 0;
@@ -520,7 +544,7 @@ void resetGameParameters() {
 	lastDirectionPressed = Direction::NONE;
 	Snake::direction = Direction::NONE;
 	snake.clear();
-	playerScore = 0;
+	Score::current = 0;
 	snake.push(World::getRandomPoint());
 	Timing::gameUpdateTime_ms = Timing::gameUpdateTimeOnReset_ms;
 	Display::display.clearDisplay();
@@ -530,7 +554,7 @@ void resetGameParameters() {
 
 
 
-void drawDisplayBackground(bool partial) {
+void drawDisplayBackground() {
 
 	//DEBUG_PRINTLN_FLASH("Updating Display");
 	using namespace Display;
@@ -543,11 +567,11 @@ void drawDisplayBackground(bool partial) {
 	// draw scores
 	display.setCursor(2, 1);
 	display.print(F("Score:"));
-	display.print(playerScore);
+	display.print(Score::current);
 	
 	display.setCursor((Width / 2) + 2, 1);	
 	display.print(F("High:"));
-	display.print(highScore);
+	display.print(Score::high);
 
 	// draw play area
 	//      pos  1x, 1y, 2x, 2y, colour
@@ -735,11 +759,13 @@ void drawUpdatedScore() {
 	// draw scores
 	display.fillRect(36, 1, 27, 8, BLACK);
 	display.setCursor(38, 1);
-	display.print(playerScore);
+	display.print(Score::current);
 }
 
 
 void placeRandomScran() {
+
+	using namespace World;
 
 // This is a C++ lambda function.
 	static auto isInSnake = [](Point& point)->bool {
@@ -752,7 +778,7 @@ void placeRandomScran() {
 	};
 
 	do {
-		scranPos = World::getRandomPoint();
+		scranPos = getRandomPoint();
 		DEBUG_PRINT_FLASH("scranpos: "); DEBUG_PRINTLN(scranPos);
 	} while (isInSnake(scranPos));
 
@@ -761,18 +787,22 @@ void placeRandomScran() {
 }
 
 
-#pragma message "detect ate scran and related game updates should be separate."
+//#pragma message "detect ate scran and related game updates should be separate."
 bool detectPlayerAteScran() {
 		
-	if (Snake::head() == scranPos) {
+	if (Snake::head() == World::scranPos) {
 
-		playerScore += 10;
-		if (playerScore % 100 == 0) { Timing::gameUpdateTime_ms -= 35; }             
+		Score::current += 10;
+
+		if (Score::current % 100 == 0)  
+			Timing::gameUpdateTime_ms -= 30;             
+		
 		tone(Pin::SOUND, 2000, 10);
 		placeRandomScran();
 
 		return true;
 	}
+
 	return false;
 }
 
@@ -782,7 +812,7 @@ bool detectSelfCollision(Point newHead) {
 
 	//Serial.print(F("Head: ")); Serial.println(*Snake::head);
 
-	for (auto segment = snake.begin(); segment != snake.end(); ++segment) {
+	for (auto segment = snake.begin(); segment != snake.end() - 1; ++segment) {
 		
 		if (newHead == *segment) {
 
@@ -870,9 +900,9 @@ void doGameOver() {
 	tone(Pin::SOUND, 1000, 50);
     display.print(F("OVER"));
 
-	if (playerScore > highScore) {
-		highScore = playerScore;
-		EEPROM.write(0, highScore / 10);
+	if (Score::current > Score::high) {
+		Score::high = Score::current;
+		EEPROM.write(0, Score::high / 10);
 	}
 
     for (uint8_t i = 0; i <= 16; ++i) { // this is to draw rectangles around game over
