@@ -22,13 +22,19 @@
 #include "globals.hpp"
 #include "Point.hpp"
 #include "Snake.hpp"
+#include "error.hpp"
+
+using PointType = Point<POINT_DATA_TYPE>;
+using SnakeType = Snake<SNAKE_DATA_SIZE, PointType>;
+
+// This is our snake.
+SnakeType snake {};
+// Pressing the button sets this variable.  It is volatile as it is updated from user input.
+volatile Direction lastDirectionPressed { Direction::NONE };
 
 
-namespace Display {
 
-	constexpr const uint8_t Width 	{ 128 };
-	constexpr const uint8_t Height 	{ 64 };
-	
+namespace Display {	
 	// Initialize the display.
 	Adafruit_SSD1306 display( Width, Height );  
 }
@@ -36,44 +42,22 @@ namespace Display {
 
 // The gameworld space.
 namespace World {
-
-	// How large in pixels do you want the game rows and columns to be.
-	constexpr const uint8_t Scale { 6 };
-
-	// Offsets top left and right.
-	constexpr const uint8_t xMinOffset { 4 };
-	constexpr const uint8_t xMaxOffset { 2 };
-	constexpr const uint8_t yMinOffset { 12 };
-	constexpr const uint8_t yMaxOffset { 2 };
-
-	// How big the world is.
-	constexpr const uint8_t minX  { 0 };
-	constexpr const uint8_t maxX  { (Display::Width - xMinOffset - xMaxOffset) / Scale };
-	constexpr const uint8_t minY  { 0 };
-	constexpr const uint8_t maxY  { (Display::Height - yMinOffset - yMaxOffset) / Scale };
 	
 	// Where the food is.
-	Point<POINT_DATA_TYPE> scranPos {};
+	PointType scranPos {};
 
 	// Get a random point.  This is a C++ lambda function.
-	auto getRandomPoint { []() -> Point<POINT_DATA_TYPE> { 
+	auto getRandomPoint { []()->PointType { 
 		return { static_cast<POINT_DATA_TYPE>( random(World::minY, World::maxY) ),
 				 static_cast<POINT_DATA_TYPE>( random(World::minX, World::maxX) ) }; 
 	}};
 
 	// Converts game coordinates to display coordinates.
-	auto toWorld { [](const Point<POINT_DATA_TYPE>& p) -> Point<POINT_DATA_TYPE> {
+	auto toWorld { [](const PointType& p)->PointType {
 		return {	static_cast<POINT_DATA_TYPE>((p.y * Scale) + yMinOffset),
 					static_cast<POINT_DATA_TYPE>((p.x * Scale) + xMinOffset) };
 	}};
 }
-
-
-Snake<SNAKE_DATA_SIZE, Point<POINT_DATA_TYPE>> snake {};
-
-
-// Pressing the button sets this variable.  It is volatile as it is updated from user input.
-volatile Direction lastDirectionPressed { Direction::NONE };
 
 
 namespace Score {
@@ -82,6 +66,7 @@ namespace Score {
 	// Highscore is read from the EEPROM non-volatile memory.
 	uint16_t high 	 { ((EEPROM.read(0) != 255) ? static_cast<uint16_t>(EEPROM.read(0) * 10) : 0) };
 }
+
 
 
 // Define a button.
@@ -101,7 +86,6 @@ struct Button {
 	mutable uint8_t pressedCount { 0 };
 	mutable uint8_t unPressedCount { 0 };
 };
-
 
 
 // Create buttons.
@@ -126,8 +110,9 @@ namespace Timing {
 
 
 
-// ------------ Function Declarations ------------
-
+// ---------------------------------------------------
+// -------------- Function Declarations --------------
+// ---------------------------------------------------
 /**
  * @brief Check if food eaten.
  * @return true if yes.
@@ -139,14 +124,14 @@ inline bool detectPlayerAteScran();
  * @brief Check if the player left the game area.
  * @return true if yes.
  */
-inline bool detectPlayerOutOfArea(Point<POINT_DATA_TYPE> newHead);
+inline bool detectPlayerOutOfArea(const PointType& newHead);
 
 
 /**
  * @brief Check if the player collided with himself.
  * @return false 
  */
-inline bool detectSelfCollision(Point<POINT_DATA_TYPE> newHead);
+inline bool detectSelfCollision(const PointType& newHead);
 
 
 /**
@@ -227,23 +212,24 @@ const __FlashStringHelper* directionToString(Direction d);
 
 
 
-//  Main Functions...
-
+//	Setup
+#pragma warning "Setup"
 void setup() {
 
 	using namespace Display;
 	delay(Timing::gameUpdateTime_ms);
 
 	ITimer1.init();
-	if (ITimer1.attachInterruptInterval(Button::readingPeriod_ms, readButtons)) {
-		DEBUG_PRINTLN_FLASH("Timer attached successfully.");
-	}
-
+	ITimer1.attachInterruptInterval(Button::readingPeriod_ms, readButtons);
 	randomSeed(analogRead(0));
+
 	display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
-#if (DEBUG == 1)
+#if (DEBUG == YES)
 	Serial.begin(9600);
+#endif
+#if (LIVE_ERRORS == YES) // Allows Errors to be displayed live.
+	Error::initErrors(Display::display);
 #endif
     delay(Timing::gameUpdateTime_ms);
 	// DEBUG_PRINT_FLASH("Size: ("); DEBUG_PRINT(World::maxX);
@@ -271,17 +257,16 @@ void setup() {
 }
 
 
-
+// Main Loop
+#pragma warning "Loop"
 void loop() {
-	auto tNow { millis() };
 
+	auto tNow { millis() };
+// Game Loop
 	if (tNow - Timing::lastGameUpdatedTime > Timing::gameUpdateTime_ms) {
-		DEBUG_PRINTLN_FLASH("\nTICK");
-		DEBUG_PRINTLN_FLASH("SNAKE START:");
-		DEBUG_PRINTLN(snake);
+//		DEBUG_PRINTLN_FLASH("SNAKE AT START:"); DEBUG_PRINTLN(snake);
 		updateGame();
-		DEBUG_PRINTLN_FLASH("SNAKE END:");
-		DEBUG_PRINTLN(snake);
+//		DEBUG_PRINTLN_FLASH("SNAKE AT END:"); DEBUG_PRINTLN(snake); DEBUG_PRINTLN();
 		Timing::lastGameUpdatedTime = tNow;
 	}
 }
@@ -319,7 +304,7 @@ void resetGameParameters() {
 
 // Can we just create a new Snake.
 	lastDirectionPressed = Direction::NONE;
-	snake = Snake<SNAKE_DATA_SIZE, Point<POINT_DATA_TYPE>> {};
+	snake = SnakeType { };
 //	snake.setDirection(Direction::NONE);
 	Score::current = 0;
 	snake.push(World::getRandomPoint());
@@ -372,7 +357,7 @@ void updateGame() {
 	// Update the Snake's direction from button input.
 	if (lastDirectionPressed != snake.getDirection()) {
 
-#pragma "query this code"
+#pragma message "check this code"
 		switch (lastDirectionPressed) {
 
 			case Direction::UP:
@@ -399,7 +384,7 @@ void updateGame() {
 		// Move the Snake.
 		// Save current head position.
 		auto currentHead = snake.head();
-		Point<POINT_DATA_TYPE> newHead {};
+		PointType newHead {};
 
 		switch (snake.getDirection()) { 
 
@@ -417,16 +402,17 @@ void updateGame() {
 				break;
 			default: break;
 		}
-
-		if (detectPlayerOutOfArea(newHead) || detectSelfCollision(newHead)) {
+		DEBUG_PRINTLN((snake.pointIsInside(newHead))?"true":"false");
+		if (detectPlayerOutOfArea(newHead) || detectSelfCollision(newHead)) {	
 			doGameOver();
 			return;
 		} else snake.push(newHead);
+		DEBUG_PRINT_FLASH("Pushing head: "); DEBUG_PRINTLN(newHead);
 
 		if (detectPlayerAteScran()) { // If eating tail stays put and only head advances.
 			drawUpdatedScore();
 		} else {
-			DEBUG_PRINTLN_FLASH("Removing tail.");
+	//		DEBUG_PRINTLN_FLASH("Popping");
 			auto removed = snake.pop();
 			// best place to remove the tail.
 			display.fillRect((removed.x * World::Scale) + World::xMinOffset, (removed.y * World::Scale) + World::yMinOffset, World::Scale, World::Scale, BLACK);
@@ -483,8 +469,8 @@ void drawARandomLine(uint8_t colour) {
 
 	auto getRand { [](uint8_t max) -> uint8_t { return static_cast<uint8_t>(random(0, max)); } };
 
-	Point start { getRand(Display::Height), getRand(Display::Width) };
-	Point end {	  getRand(Display::Height), getRand(Display::Width) };
+	PointType start { getRand(Display::Height), getRand(Display::Width) };
+	PointType end   { getRand(Display::Height), getRand(Display::Width) };
 	
 	Display::display.drawLine(start.x, start.y, end.x, end.y, colour);
 }
@@ -511,6 +497,7 @@ void drawSnake() {
 
 	auto headPos = toWorld(snake.head());
 	// draw the head.
+	DEBUG_PRINT_FLASH("Drawing head: "); DEBUG_PRINTLN(snake.head());
 	d.fillRect( headPos.x, headPos.y, Scale, Scale, WHITE );
 
 	// We don't want to draw all.  We want to draw the one after the head. and the last 2.
@@ -546,8 +533,11 @@ void placeRandomScran() {
 	using namespace World;
 
 // This is a C++ lambda function.
-	static auto isInSnake = [](Point<POINT_DATA_TYPE>& point)->bool {
-		for (uint16_t i = 0; i < snake.length(); ++i) {
+	static auto isInSnake = [](PointType& point)->bool {
+		//auto itr = snake.
+		for (uint16_t i{0}; i < snake.length(); ++i) {
+#pragma	message	"Is the following line efficient in terms of speed???"
+			// change to class function if that is working.
 			if (point == snake[i]) { 
 				return true; 
 			};
@@ -569,7 +559,7 @@ void placeRandomScran() {
 bool detectPlayerAteScran() {
 	if (snake.head() == World::scranPos) {
 
-	DEBUG_PRINTLN_FLASH("Player ate scran");
+		DEBUG_PRINTLN_FLASH("Player ate scran");
 		Score::current += 10;
 
 		if (Score::current % 100 == 0)  
@@ -586,38 +576,51 @@ bool detectPlayerAteScran() {
 
 
 
-bool detectSelfCollision(Point<POINT_DATA_TYPE> newHead) {
+bool detectSelfCollision(const PointType& newHead) {
 
-	for (uint16_t i = 0; i < snake.length(); ++i) {
+	// for (uint16_t i = 0; i < snake.length(); ++i) {
 		
-		if (newHead == snake[i]) {
-
+	// 	if (newHead == snake[i]) {
+	if (snake.pointIsInside(newHead)) {
 			tone(Pin::SOUND, 2000, 20);
 			tone(Pin::SOUND, 1000, 20);
 			DEBUG_PRINTLN_FLASH("Detected self collision.");
+			DEBUG_PRINTLN(snake);
 			return true;
-		}
+		//}
 	}
 	return false;
 }
 
 
 
-bool detectPlayerOutOfArea(Point<POINT_DATA_TYPE> newHead) {
+bool detectPlayerOutOfArea(const PointType& newHead) {
 
 #if (DEBUG == 1)
-    auto rVal = (( newHead.x >= World::maxX  ) || ( newHead.y >= World::maxY ));
+	bool rVal;
+	if constexpr(Utility::is_unsigned<POINT_DATA_TYPE>::value)
+		rVal = (( newHead.x >= World::maxX  ) || ( newHead.y >= World::maxY ));
+	else 
+		rVal = (( newHead.x >= World::maxX ) || ( newHead.x < 0 ) || 
+				( newHead.y >= World::maxY ) || ( newHead.y < 0 ));
 	if (rVal) {
-		char pos[35];
-		sprintf(pos, "head pos: (%u, %u)", newHead.x / World::Scale, newHead.y / World::Scale);
-		DEBUG_PRINTLN(pos);
-		sprintf(pos, "World min/max: (%u, %u), (%u, %u)", World::minX, World::minY, World::maxX, World::maxY);
-		DEBUG_PRINTLN(pos);
+		DEBUG_PRINT_FLASH("head pos: ");
+		Point<uint8_t> newHeadScaled { static_cast<uint8_t>(newHead.y / World::Scale), static_cast<uint8_t>(newHead.x / World::Scale) };
+		DEBUG_PRINTLN(newHeadScaled);
+		DEBUG_PRINT_FLASH("World min/max: ");
+		Point<uint8_t> WorldMin { World::minY, World::minX };
+		DEBUG_PRINT(WorldMin);
+		Point<uint8_t> WorldMax { World::maxY, World::maxX };
+		DEBUG_PRINT_FLASH(", ");
+		DEBUG_PRINTLN( WorldMax );
 		DEBUG_PRINTLN_FLASH("Detected out of area");
 	}
 	return rVal;
 #else
-	return (( newHead.x >= World::maxX ) || ( newHead.y >= World::maxY ));
+	if constexpr(Utility::is_unsigned<POINT_DATA_TYPE>::value)
+		return (( newHead.y >= World::maxY ) || ( newHead.x >= World::maxX ));
+	else return (( newHead.x >= World::maxX ) || ( newHead.x < 0 ) ||
+				( newHead.y >= World::maxY || newHead.y < 0 ));
 #endif
 }
 

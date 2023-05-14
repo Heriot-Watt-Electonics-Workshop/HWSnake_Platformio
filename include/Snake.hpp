@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include "globals.hpp"
 #include "Point.hpp"
+#include "error.hpp"
 
 // constexpr const uint16_t MAX_SNAKE_SEGMENTS { 256 };
 // constexpr const uint8_t SNAKE_DATA_SIZE { MAX_SNAKE_SEGMENTS / 4 };
@@ -19,20 +20,31 @@
 //  shifted in and out the crumb using left and right shift to separate the pointer from the 
 //  crumb value, however i developed the snake on a 64-bit pc.  The largest integer data type 
 //  in C++ is 64-bit so instead i created this struct.
-struct CrumbPtr {
+struct CrumbPtr 
+#if (DEBUG == YES)
+: public Printable
+#endif // (DEBUG == YES)
+{
     
 	uint8_t* ptr; // 64 bits on a pc. 8 bits on an avr.  
 	uint8_t crumb;
   
 	using selfType = CrumbPtr;
-  
+
+	CrumbPtr(uint8_t* ptr, uint8_t crumb) : ptr{ptr}, crumb{crumb} {}
 	Direction getValue();
   	void putValue(Direction newval);
-  
-	selfType operator++();
-	selfType operator++(int);
-	selfType operator--();
-	selfType operator--(int);
+	
+	bool operator==(const CrumbPtr&) const;
+	bool operator!=(const CrumbPtr&) const;
+	selfType& operator++(); // Prefix
+	selfType operator++(int); // Postfix
+	selfType& operator--(); // Prefix
+	selfType operator--(int); // Postfix
+
+#if (DEBUG == YES)
+	size_t printTo(Print& p) const;
+#endif
 };
 
 
@@ -57,6 +69,7 @@ class Snake
     
 public:
     
+	//Snake() : data{}, m_length{}, m_dir{Direction::NONE}, m_head{}, m_tail{}, memstart{data, 0}, memend {data, 0}  {}
     uint16_t capacity() const { return 1 + (sizeof(data) * 4); }
     bool full() const { return ( m_length == capacity() ); }
     bool empty() const { return ( m_length == 0 ); }
@@ -72,6 +85,8 @@ public:
     const POINT_TYPE pop();    
 	// Access index using subscript operator.
 	const POINT_TYPE operator[](size_t index) const;
+	// Point is in the snake.
+	bool pointIsInside(const POINT_TYPE& p);
 
 #if (DEBUG == YES)
 	size_t printTo(Print& p) const;
@@ -82,15 +97,13 @@ public:
 template <uint8_t SNAKE_DATA_SIZE, typename POINT_TYPE>
 bool Snake<SNAKE_DATA_SIZE, POINT_TYPE>::push(const POINT_TYPE& p) {
     
+	DEBUG_PRINT("Len: ");
 	DEBUG_PRINTLN(m_length);
 	if (full()) { return false; } // Basically if full don't add more.
-    
-	DEBUG_PRINT_FLASH("Adding new head at:");
-	DEBUG_PRINTLN(p);
 
 	if (m_length > 0) {  
         // move current head to memory.
-        if (p.y == m_head.y + 1) { memend.putValue(Direction::DOWN); }
+        if (p.y == m_head.y + 1) {		memend.putValue(Direction::DOWN); }
         else if (p.x == m_head.x + 1) { memend.putValue(Direction::LEFT); }
         else if (p.y + 1 == m_head.y) { memend.putValue(Direction::UP); }
         else if (p.x + 1 == m_head.x) { memend.putValue(Direction::RIGHT); }
@@ -105,6 +118,8 @@ bool Snake<SNAKE_DATA_SIZE, POINT_TYPE>::push(const POINT_TYPE& p) {
             memend.ptr = data;
         // Round off the ptr here.
         // add new point to head.
+	//	DEBUG_PRINT_FLASH("Setting head to: ");
+	//	DEBUG_PRINTLN(p);
         m_head = p;
         
     } // insert dir in mem
@@ -115,9 +130,23 @@ bool Snake<SNAKE_DATA_SIZE, POINT_TYPE>::push(const POINT_TYPE& p) {
 
 template <uint8_t SNAKE_DATA_SIZE, typename POINT_TYPE>
 const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pop() {
-    
-    if (empty()) { return POINT_TYPE { 0, 0 }; } 
-    const Point rval = m_tail;
+
+    if (empty()) { return POINT_TYPE { 0, 0 }; } // Should never be empty in the game.
+    DEBUG_PRINT_FLASH("Len: ");
+	DEBUG_PRINTLN(m_length);
+	const POINT_TYPE rval = m_tail;
+	if (m_length == 1) { 
+		m_tail = m_head = { 0, 0 };
+		m_length = 0;
+		return rval;
+	}// Length of 1 head and tail are reset and snake length set to zero.
+	if (m_length == 2) {
+		m_tail = m_head;
+		m_length--;
+		memstart.ptr = memend.ptr = data;	// Reset the memory.
+		memstart.crumb = memend.crumb = 0;
+		return rval; 
+	} // Length of 2 so tail set to head and no need to adjust the buffer.
     
     switch(~memstart.getValue()) {
         
@@ -128,10 +157,13 @@ const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pop() {
             
         default: exit(1);
     }
+//	DEBUG_PRINT_FLASH("m_tail set to: ");
+//	DEBUG_PRINTLN(m_tail);
     memstart++;
-    if (memstart.ptr >= data + sizeof(data) - 1) memstart.ptr = data;
+    if (memstart.ptr > data + sizeof(data) - 1)
+		memstart.ptr = data;
 	
-	DEBUG_PRINTLN_FLASH("m_length--");
+//	DEBUG_PRINTLN_FLASH("m_length--");
     m_length--;
     return rval;
 }
@@ -142,15 +174,18 @@ const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::operator[](size_t index) co
 	// tail to head is counting forward and head to tail is counting backwards.
 	
 	// Print an error.
-	if (index + 1 > m_length) { exit(1); /* DO SOME ERROR THINGY; */ return {0, 0}; }
+	if (index + 1 > m_length) { 
+		Error::displayError(__LINE__, __FILE__, "Out of range access.");
+		return {0, 0}; 
+	}
 	if (index == 0) { return m_head; };
 	
 	// So we follow the snake from the tail.
-	int indexFromTail = m_length - index - 1;
-	CrumbPtr cp = memstart;
-	Point p = m_tail;
+	int indexFromTail { static_cast<int>(m_length) - static_cast<int>(index) - 1 };
+	CrumbPtr cp { memstart };
+	POINT_TYPE p { m_tail };
 	
-	for (int i = 0; i < indexFromTail; ++i) {
+	for (int i{0}; i < indexFromTail; ++i) {
 		
 		switch(~cp.getValue()) {
 	
@@ -162,9 +197,54 @@ const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::operator[](size_t index) co
 		}
 		cp++;
 		// I don't agree with the constness here.  Data is never altered.
-		if (cp.ptr >= data + sizeof(data)) cp.ptr = const_cast<uint8_t*>(data);
+		if (cp.ptr > data + sizeof(data) - 1) cp.ptr = const_cast<uint8_t*>(data);
 	}
 	return p;
+}
+
+
+template <uint8_t SNAKE_DATA_SIZE, typename POINT_TYPE>
+bool Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pointIsInside(const POINT_TYPE& p) {
+	
+	//CrumbPtr cp { memend };
+
+	if (p == m_head) return true;
+	if (m_length == 1) return false;
+	
+	//DEBUG_PRINT_FLASH("p: ");
+	//DEBUG_PRINTLN(p);
+	
+	auto segment {m_head};
+	auto cp { memend };
+	--cp;
+
+	// Check cp still falls within the usable data.	
+	//if (cp.ptr < data) cp.ptr = data + (sizeof(data) - 1);
+
+//	DEBUG_PRINT_FLASH("memstart: "); DEBUG_PRINTLN(memstart);
+//	DEBUG_PRINT_FLASH("memend: "); DEBUG_PRINTLN(memend);
+//	DEBUG_PRINT(m_head);
+
+	for (;; cp--) {
+
+		if (cp.ptr < data) cp.ptr = data + (sizeof(data) - 1);
+
+//		DEBUG_PRINT_FLASH("cp: "); DEBUG_PRINTLN(cp);
+		
+		switch(cp.getValue()) {
+            
+             case Direction::UP: 	segment += { 1, 0 }; break;
+             case Direction::DOWN: 	segment -= { 1, 0 }; break;
+             case Direction::LEFT: 	segment -= { 0, 1 }; break;
+             case Direction::RIGHT: segment += { 0, 1 }; break;
+             default: exit(1);
+        }
+//		DEBUG_PRINT(segment);
+		if (segment == p) return true;
+		if (cp == memstart) break;
+	}
+	//DEBUG_PRINTLN();
+	return false;
 }
 
 
@@ -172,29 +252,32 @@ const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::operator[](size_t index) co
 template <uint8_t SNAKE_DATA_SIZE, typename POINT_TYPE>
 size_t Snake<SNAKE_DATA_SIZE, POINT_TYPE>::printTo(Print& p) const {
 	
-	char snake_str[51] {};
-	//uint8_t count = 0;
-	//const char tail[] = "<<<";
-	//const char head[] = ":=<";
+	size_t count {0};
+	POINT_TYPE pnt {m_tail};
+	auto it { memstart };
 
-	Point pnt = m_tail;
-	auto it = memstart;
-	snprintf(snake_str, 51, "(%d,%d)", m_tail.y, m_tail.x);
+	DEBUG_PRINT_FLASH("<<<");
+	count += p.print(m_tail);
 
 	for (uint16_t i = 0; i < m_length - 1; ++i) {
 
 		switch(~it.getValue()) {
             
-             case Direction::UP: pnt += { 1, 0 }; break;
-             case Direction::DOWN: pnt -= { 1, 0 }; break;
-             case Direction::LEFT: pnt -= { 0, 1 }; break;
+             case Direction::UP: 	pnt += { 1, 0 }; break;
+             case Direction::DOWN: 	pnt -= { 1, 0 }; break;
+             case Direction::LEFT: 	pnt -= { 0, 1 }; break;
              case Direction::RIGHT: pnt += { 0, 1 }; break;
              default: exit(1);
         }
+		
+		count += p.print(pnt);
+		it++;
 
-		snprintf(snake_str, 50, "%s-(%d,%d)", snake_str, pnt.y, pnt.x); 
+		if (it.ptr > data + sizeof(data) - 1) it.ptr = const_cast<uint8_t*>(data); 
 	}
-	return p.print(snake_str);
+	
+	DEBUG_PRINT_FLASH(":=<");
+	return count;
 }
 #endif
 
