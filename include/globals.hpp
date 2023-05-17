@@ -14,7 +14,7 @@
 // snake may be 4 times this size + 1 for the head.  Maximum if all spaces 
 // were in the snake would be 160 sections so 40 bytes of data should be enough.
 #if (DEBUG == YES)
-constexpr uint8_t SNAKE_DATA_SIZE { 20 };
+constexpr uint8_t SNAKE_DATA_SIZE { 25 };
 #elif (DEBUG == NO)
 constexpr uint8_t SNAKE_DATA_SIZE { 40 };
 #endif
@@ -66,13 +66,14 @@ struct is_unsigned {
 };
 
 
+
 #if (DEBUG == YES)
-// This class allows to print any unsigned (or positive) integer type in binary format.
+// This class allows to print any integer type in binary format.
 //  It is here to aid in debugging. 
 template<typename T>
 struct Binary : public Printable {
     T value;
-	constexpr Binary(T value) : value{value} { static_assert(is_unsigned<T>::value, "Needs to be unsigned.\n"); } 
+	constexpr Binary(T value) : value{value} { } 
 	size_t printTo(Print& p) const;
 };
 #endif // (DEBUG == YES)
@@ -86,6 +87,7 @@ namespace Pin {
 	constexpr uint8_t DOWN 	{ 8 };
 	constexpr uint8_t LEFT 	{ 4 };
 	constexpr uint8_t RIGHT { 2 };
+	constexpr uint8_t MIDDLE{ 3 };
 
 #if (SOUND == YES)
 	constexpr uint8_t SOUND { 9 };
@@ -94,7 +96,7 @@ namespace Pin {
 
 
 namespace Display {
-
+	constexpr uint8_t Address 	{ 0x3C };
 	constexpr uint8_t Width 	{ 128 };
 	constexpr uint8_t Height 	{ 64 };
 }

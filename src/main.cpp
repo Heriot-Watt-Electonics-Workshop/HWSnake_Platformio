@@ -3,13 +3,21 @@
 // Build your own Arduino and OLED display shield.
 // Coded by Will W from the EPS Electronics Workshop with too much abstraction
 // and too much C++, mostly for his own entertainment.
-// Version 2.0 was created on the 22nd April 2023
+// Version 2.0 was created in April 2023
 // The snake should now grow to fill the entire screen if you are good enough.
 // Previous version was Version 1.0 on the 20th November 2021
 
 // Dependencies are the SSD1306 library from Adafruit.
 // and 'TimerInterrupt' by Khoi Hoang.
-// These can be installed from 'Tools/Manage Libraries' in the menubar above.
+// These can be installed from 'Tools/Manage Libraries' in the menubar above if
+// in the Arduino IDE or from the Platformio library manager if using vscode.
+
+
+// TODO:
+// Add rect struct
+// Nice hiscore window
+// Do you want splash screen to take care of cleaning up the game or something else.
+// Add a way to clear the hiscore.
 
 
 #include <Adafruit_GFX.h>
@@ -18,9 +26,8 @@
 // Timer Interrupt for button debounce.
 #define USE_TIMER_1 true
 #include "TimerInterrupt.h"
-#include "assert.h"
 #include "globals.hpp"
-#include "Point.hpp"
+#include "Geometry.hpp"
 #include "Snake.hpp"
 #include "error.hpp"
 
@@ -71,7 +78,6 @@ namespace Score {
 
 // Define a button.
 struct Button {
-
 	enum class State { pressed, notPressed };
 
 	constexpr static uint8_t readingPeriod_ms { 2 }; 	// Time between button reads.
@@ -91,12 +97,13 @@ struct Button {
 // Create buttons.
 namespace Buttons {
 
-	constexpr Button 	bUp		{ Pin::UP, Direction::UP },
-						bDown	{ Pin::DOWN, Direction::DOWN },
-						bLeft	{ Pin::LEFT, Direction::LEFT },
-						bRight	{ Pin::RIGHT, Direction::RIGHT };
+	constexpr Button 	bUp		{ Pin::UP, 		Direction::UP },
+						bDown	{ Pin::DOWN, 	Direction::DOWN },
+						bLeft	{ Pin::LEFT, 	Direction::LEFT },
+						bRight	{ Pin::RIGHT, 	Direction::RIGHT },
+						bMiddle { Pin::MIDDLE,	Direction::NONE };
 
-	constexpr Button const* All[] { &bUp, &bDown, &bLeft, &bRight };
+	constexpr Button const* All[] { &bUp, &bDown, &bLeft, &bRight, &bMiddle };
 }
 
 
@@ -106,6 +113,13 @@ namespace Timing {
 	uint16_t gameUpdateTime_ms { 300 };						// This decreases as you score points.
 	constexpr uint16_t gameUpdateTimeOnReset_ms { 300 };	// This is the value it resets to.
 	unsigned long lastGameUpdatedTime { 0 };				// A counter used in the loop.
+}
+
+namespace Game {
+	enum class State {
+		EntrySplash, Running, Paused, GameOver, Error
+	};
+	volatile State state{ State::EntrySplash }; 
 }
 
 
@@ -161,18 +175,28 @@ void drawScran();
 
 /**
  * @brief Draw the Snake.
+ * @param wholeSnake Draws every segment when normally operation is optimized.
  */
-void drawSnake();
-
+void drawSnake(bool wholeSnake = false);
 
 /**
- * @brief Place food at a random location.
+ * @brief  Redraw all objects in the game world.
+ */
+void redrawAll();
+
+/**
+ * @brief Place food at a random location and draw.
  */
 inline void placeRandomScran();
 
+/**
+ * @brief Read and debounce a button.
+ */
+void readButton(Button const* button);
+
 
 /**
- * @brief Read the button states and do debounce.
+ * @brief Read the buttons required.
  */
 void readButtons();
 
@@ -199,6 +223,11 @@ void drawUpdatedScore();
  */
 void doSplashScreen();
 
+/**
+ * @brief Display a paused message and pause.
+ */
+void doPaused();
+
 
 #if (DEBUG == YES)
 /**
@@ -207,29 +236,34 @@ void doSplashScreen();
  * @returns String represenatation of direction.
  */
 const __FlashStringHelper* directionToString(Direction d);
+
+const __FlashStringHelper* stateToString(Game::State g);
 #endif
 
 
 
 
 //	Setup
-#pragma warning "Setup"
 void setup() {
 
 	using namespace Display;
 	delay(Timing::gameUpdateTime_ms);
 
+// Initialize interrupt timer for reading the buttons.
 	ITimer1.init();
 	ITimer1.attachInterruptInterval(Button::readingPeriod_ms, readButtons);
+
+// Seed the random function with a random value.
 	randomSeed(analogRead(0));
 
-	display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+// Initialize the display.
+	display.begin(SSD1306_SWITCHCAPVCC, Address);
 
 #if (DEBUG == YES)
 	Serial.begin(9600);
 #endif
-#if (LIVE_ERRORS == YES) // Allows Errors to be displayed live.
-	Error::initErrors(Display::display);
+#if (LIVE_ERRORS == YES) // Allows Errors to be displayed on screen.
+	Error::initErrors(display);
 #endif
     delay(Timing::gameUpdateTime_ms);
 	// DEBUG_PRINT_FLASH("Size: ("); DEBUG_PRINT(World::maxX);
@@ -242,6 +276,7 @@ void setup() {
     display.setTextWrap(false);
     display.dim(0);         				// set the display brighness
 
+	// Setup the buttons pins.
 	for (const auto* button : Buttons::All) {
 		pinMode(button->pin, INPUT_PULLUP);
 	}
@@ -253,21 +288,60 @@ void setup() {
 	DEBUG_PRINTLN(__cplusplus);
 
     doSplashScreen();    		// display the snake start up screen
-	resetGameParameters();
+
+	// Splash screen takes care of resetting the game.
+	//resetGameParameters();
+	//redrawAll();
 }
 
+static uint16_t counter{};
 
 // Main Loop
-#pragma warning "Loop"
 void loop() {
-
 	auto tNow { millis() };
 // Game Loop
 	if (tNow - Timing::lastGameUpdatedTime > Timing::gameUpdateTime_ms) {
 //		DEBUG_PRINTLN_FLASH("SNAKE AT START:"); DEBUG_PRINTLN(snake);
-		updateGame();
-//		DEBUG_PRINTLN_FLASH("SNAKE AT END:"); DEBUG_PRINTLN(snake); DEBUG_PRINTLN();
+		DEBUG_PRINT_FLASH("Turn: "); DEBUG_PRINTLN(++counter); 
+		if (Game::state == Game::State::Running) updateGame();
+		else if (Game::state == Game::State::Paused) doPaused();
+		else if (Game::state == Game::State::Error) { 
+			Error::displayError(__LINE__, __FILE__, "In Error State");
+			DEBUG_PRINT_FLASH("Error");
+		}
+
+//		DEBUG_PRINTLN_FLASH("SNAKE AT END:"); DEBUG_PRINTLN(snake); 
 		Timing::lastGameUpdatedTime = tNow;
+		DEBUG_PRINTLN();
+	}
+}
+
+
+void readButton(Button const* button) {
+	
+	if (!digitalRead(button->pin) ) {
+		button->unPressedCount = 0;
+
+		if (++button->pressedCount >= Button::triggerCount / Button::readingPeriod_ms) {
+
+			if (button->state != Button::State::pressed) {
+
+				if (button == &Buttons::bMiddle && Game::state != Game::State::EntrySplash) {
+					DEBUG_PRINTLN_FLASH("Middle button pressed.");
+					if (Game::state == Game::State::Running)
+						Game::state = Game::State::Paused;
+					else if (Game::state == Game::State::Paused)
+						Game::state = Game::State::Running;
+				} else { 
+					lastDirectionPressed = button->direction;
+				}
+				button->state = Button::State::pressed;
+			}
+		}
+	} else if (button->state == Button::State::pressed && (++button->unPressedCount >= Button::triggerCount / Button::readingPeriod_ms)) {
+
+		button->state = Button::State::notPressed;
+		button->pressedCount = 0;
 	}
 }
 
@@ -277,54 +351,46 @@ void loop() {
 void readButtons() {
 
 	using namespace Timing;
+	using namespace Game;
 
-	for (auto& button : Buttons::All) {
-
-  		if (!digitalRead(button->pin) ) {
-    		button->unPressedCount = 0;
-
-			if (++button->pressedCount >= Button::triggerCount / Button::readingPeriod_ms) {
-    
-      			if (button->state != Button::State::pressed) {
-					lastDirectionPressed = button->direction;
-        			button->state = Button::State::pressed;
-    			}
-    		}
-		} else if (button->state == Button::State::pressed && (++button->unPressedCount >= Button::triggerCount / Button::readingPeriod_ms)) {
-
-			button->state = Button::State::notPressed;
-      		button->pressedCount = 0;
-    	}
-  	}
+	switch (state) {
+		case State::EntrySplash:
+		case State::Running:
+			for (auto& button : Buttons::All) readButton(button);
+			break;
+		case State::Paused:
+			readButton(&Buttons::bMiddle);
+			break;
+		case State::GameOver:
+			break;
+		default:
+			state = Game::State::Error; // Unhandled game state.
+	}
 }
 
 
 
 void resetGameParameters() {
 
-// Can we just create a new Snake.
 	lastDirectionPressed = Direction::NONE;
-	snake = SnakeType { };
-//	snake.setDirection(Direction::NONE);
-	Score::current = 0;
-	snake.push(World::getRandomPoint());
-	Timing::gameUpdateTime_ms = Timing::gameUpdateTimeOnReset_ms;
-	Display::display.clearDisplay();
-	drawDisplayBackground();	// Draw the whole display but only once.
-	placeRandomScran();
+	snake = SnakeType { }; 				// Create a new empty snake.
+	snake.push( World::getRandomPoint() ); // Put the snake in a random place.
+
+	Score::current = 0;					// Reset the score.
+	Timing::gameUpdateTime_ms = Timing::gameUpdateTimeOnReset_ms; // Reset game speed.
+
+	placeRandomScran();					// Place the food.
 }
 
 
 
 void drawDisplayBackground() {
 
-	//DEBUG_PRINTLN_FLASH("Updating Display");
 	using namespace Display;
 
 	display.setTextSize(0);
-	display.setTextColor(WHITE);
-	
-	display.fillRect(0, 0, Display::Width - 1, 8, BLACK);
+	display.setTextColor(WHITE);	
+	//display.fillRect(0, 0, Display::Width - 1, 8, BLACK);
 	
 	// draw scores
 	display.setCursor(2, 1);
@@ -341,7 +407,7 @@ void drawDisplayBackground() {
 	display.drawLine((Width / 2) - 1, 0, (Width / 2) - 1, 9, WHITE); 	// score seperator
 	display.fillRect(0, 9, Width - 1, 2, WHITE); 						// below text border
 	display.drawLine(0, 0, 0, 9, WHITE);
-	display.drawLine(Width - 1, 0, Width - 1, 9, WHITE); 
+	display.drawLine(Width - 1, 0, Width - 1, 9, WHITE);
 
 	display.fillRect(0, Height - 3, Width - 1, 3, WHITE);				// bottom border
 	display.fillRect(0, 9, 3, Height - 1, WHITE); 						// left border
@@ -349,45 +415,39 @@ void drawDisplayBackground() {
 }
 
 
-
 void updateGame() {
+
+// Current order of events.
+// 1. - If direction is changed then change direction.
+// 2. - If snake moving then determine new head position.
+// 3. - Detect if out of area or self collision.  If not add a new head.
+// 4. - Detect if the player ate scran.
+// 5. - If scran eaten then update the score. else pop the tail and rub out the tail.
+// 6. - Draw the snake.
+// 7. - If scran eaten then replace the scran.
+// 8. - Update the display.
     
 	using namespace Display;
+	auto scranEaten {false};
 
-	// Update the Snake's direction from button input.
+// Update the Snake's direction from button input if not same or opposite direction.
+	DEBUG_PRINTLN(directionToString(lastDirectionPressed));
 	if (lastDirectionPressed != snake.getDirection()) {
-
-#pragma message "check this code"
-		switch (lastDirectionPressed) {
-
-			case Direction::UP:
-				if (snake.getDirection() != Direction::DOWN)
-					snake.setDirection(lastDirectionPressed);
-				break;
-			case Direction::DOWN:
-				if (snake.getDirection() != Direction::UP)
-					snake.setDirection(lastDirectionPressed);
-				break;
-			case Direction::LEFT:
-				if (snake.getDirection() != Direction::RIGHT)
-					snake.setDirection(lastDirectionPressed);
-				break;
-			case Direction::RIGHT:
-				if (snake.getDirection() != Direction::LEFT)
-					snake.setDirection(lastDirectionPressed);
-			default: break;
-		}
+		DEBUG_PRINTLN(directionToString(~lastDirectionPressed));
+		if (lastDirectionPressed != ~snake.getDirection())
+			snake.setDirection(lastDirectionPressed);
 	}
 
-	if (snake.getDirection() != Direction::NONE) {  // Nothing happens.
+// Save current head position.
+	const auto currentHead = snake.head();
+
+// If the snake is moving.
+	if (snake.getDirection() != Direction::NONE) { 
 
 		// Move the Snake.
-		// Save current head position.
-		auto currentHead = snake.head();
 		PointType newHead {};
 
 		switch (snake.getDirection()) { 
-
 			case Direction::UP:
 				newHead = {static_cast<POINT_DATA_TYPE>(currentHead.y - 1), currentHead.x };
 				break;
@@ -402,14 +462,16 @@ void updateGame() {
 				break;
 			default: break;
 		}
-		DEBUG_PRINTLN((snake.pointIsInside(newHead))?"true":"false");
+		//DEBUG_PRINTLN((snake.pointIsInside(newHead))?"true":"false");
 		if (detectPlayerOutOfArea(newHead) || detectSelfCollision(newHead)) {	
 			doGameOver();
 			return;
 		} else snake.push(newHead);
-		DEBUG_PRINT_FLASH("Pushing head: "); DEBUG_PRINTLN(newHead);
+		//DEBUG_PRINT_FLASH("Pushing head: "); DEBUG_PRINTLN(newHead);
 
-		if (detectPlayerAteScran()) { // If eating tail stays put and only head advances.
+		scranEaten = detectPlayerAteScran();
+		
+		if (scranEaten) { // If eating tail stays put and only head advances.
 			drawUpdatedScore();
 		} else {
 	//		DEBUG_PRINTLN_FLASH("Popping");
@@ -418,19 +480,20 @@ void updateGame() {
 			display.fillRect((removed.x * World::Scale) + World::xMinOffset, (removed.y * World::Scale) + World::yMinOffset, World::Scale, World::Scale, BLACK);
 		}
 	}
-	DEBUG_PRINTLN_FLASH("Draw");
+	//DEBUG_PRINTLN_FLASH("Draw");
 	drawSnake();
+	if (scranEaten) { placeRandomScran(); }
 	display.display();
 }
-
 
 
 void doSplashScreen() {
 
 	using namespace Display;
+	Game::state = Game::State::EntrySplash;
 	display.clearDisplay();
 
-	while (true) {
+	while (Game::state == Game::State::EntrySplash) {
 
 		auto tNow { millis() };
 
@@ -458,11 +521,13 @@ void doSplashScreen() {
 
 		if (lastDirectionPressed != Direction::NONE) {
 			lastDirectionPressed = Direction::NONE;
-			break;
+				//DEBUG_PRINTLN_FLASH("Resetting Game Parameters.");
+			resetGameParameters();
+			redrawAll();
+			Game::state = Game::State::Running;
 		}
 	}
 }
-
 
 
 void drawARandomLine(uint8_t colour) {
@@ -490,32 +555,45 @@ void drawScran() {
 }
 
 
-void drawSnake() {
+void drawSnake(bool wholeSnake) {
+
 	// Only draws what is changed.
-	auto& d = Display::display;
 	using namespace World;
+	using namespace Display;
 
 	auto headPos = toWorld(snake.head());
+
 	// draw the head.
-	DEBUG_PRINT_FLASH("Drawing head: "); DEBUG_PRINTLN(snake.head());
-	d.fillRect( headPos.x, headPos.y, Scale, Scale, WHITE );
+	display.fillRect( headPos.x, headPos.y, Scale, Scale, WHITE );
 
 	// We don't want to draw all.  We want to draw the one after the head. and the last 2.
 	if (snake.length() == 1) return;
 	if (snake.length() > 1) {
 		auto tailPos = toWorld(snake.tail());
-		d.fillRect( tailPos.x, tailPos.y, Scale, Scale, BLACK);
-		d.fillRect( tailPos.x + 3 , tailPos.y + 3, Scale - 3, Scale - 3, WHITE);
+		display.fillRect( tailPos.x, tailPos.y, Scale, Scale, BLACK);
+		display.fillRect( tailPos.x + 3 , tailPos.y + 3, Scale - 3, Scale - 3, WHITE);
 	}
 	if (snake.length() > 2) {
 		auto pos = toWorld(snake[snake.length() - 2]);
-		d.fillRect( pos.x, pos.y, Scale, Scale, BLACK);
-		d.fillRect( pos.x + 2, pos.y + 2, Scale - 2, Scale - 2, WHITE);
+		display.fillRect( pos.x, pos.y, Scale, Scale, BLACK);
+		display.fillRect( pos.x + 2, pos.y + 2, Scale - 2, Scale - 2, WHITE);
 	}
 	if (snake.length() > 3) {
 		auto pos = toWorld(snake[1]);
-		d.fillRect( pos.x, pos.y, Scale, Scale, BLACK);
-		d.fillRect( pos.x + 1, pos.y + 1, Scale - 1, Scale - 1, WHITE);
+		display.fillRect( pos.x, pos.y, Scale, Scale, BLACK);
+		display.fillRect( pos.x + 1, pos.y + 1, Scale - 1, Scale - 1, WHITE);
+	}
+
+	if (wholeSnake) {
+		for (uint16_t i = 0; i < snake.length() - 1; ++i) {
+			
+			auto pos = toWorld(snake[i]);				
+			if (i == snake.length() - 2) {
+			} else if (i == snake.length() - 1) {
+			} else {
+				display.fillRect(pos.x + 1, pos.y + 1, Scale - 1, Scale - 1, WHITE);
+			}
+		}
 	}
 }
 
@@ -527,31 +605,29 @@ void drawUpdatedScore() {
 	display.print(Score::current);
 }
 
-
+// Split into 2 functions.
 void placeRandomScran() {
 
 	using namespace World;
-
-// This is a C++ lambda function.
-	static auto isInSnake = [](PointType& point)->bool {
-		//auto itr = snake.
-		for (uint16_t i{0}; i < snake.length(); ++i) {
-#pragma	message	"Is the following line efficient in terms of speed???"
-			// change to class function if that is working.
-			if (point == snake[i]) { 
-				return true; 
-			};
-		}
-		return false;
-	};
-
 	do {
 		scranPos = getRandomPoint();
 		DEBUG_PRINT_FLASH("scranpos: "); DEBUG_PRINTLN(scranPos);
-	} while (isInSnake(scranPos));
+	} while (snake.pointIsInside(scranPos));
 
-	// Draw scran here cause only want draw once.
+	// Draw scran here cause only want to draw one time.
 	drawScran();
+}
+
+
+void redrawAll() {
+
+	using namespace Display;
+	display.clearDisplay();
+	drawDisplayBackground();
+
+	drawScran();
+	drawSnake(true);
+	display.display();
 }
 
 
@@ -559,18 +635,15 @@ void placeRandomScran() {
 bool detectPlayerAteScran() {
 	if (snake.head() == World::scranPos) {
 
-		DEBUG_PRINTLN_FLASH("Player ate scran");
+		//DEBUG_PRINTLN_FLASH("Player ate scran");
 		Score::current += 10;
 
-		if (Score::current % 100 == 0)  
-			Timing::gameUpdateTime_ms -= 30;             
+		if (Score::current % 100 == 0)
+			Timing::gameUpdateTime_ms -= (Timing::gameUpdateTime_ms / 10);            
 		
 		tone(Pin::SOUND, 2000, 10);
-		placeRandomScran();
-
 		return true;
 	}
-
 	return false;
 }
 
@@ -578,16 +651,16 @@ bool detectPlayerAteScran() {
 
 bool detectSelfCollision(const PointType& newHead) {
 
-	// for (uint16_t i = 0; i < snake.length(); ++i) {
-		
-	// 	if (newHead == snake[i]) {
-	if (snake.pointIsInside(newHead)) {
+	auto hasCollided { snake.pointIsInside(newHead) };
+
+	if (hasCollided && hasCollided.getValue() != snake.tail()) {
+
 			tone(Pin::SOUND, 2000, 20);
 			tone(Pin::SOUND, 1000, 20);
-			DEBUG_PRINTLN_FLASH("Detected self collision.");
+			DEBUG_PRINT_FLASH("Detected self collision at: "); 
+			DEBUG_PRINTLN(hasCollided.getValue());
 			DEBUG_PRINTLN(snake);
 			return true;
-		//}
 	}
 	return false;
 }
@@ -630,35 +703,21 @@ void doGameOver() {
     
 	using namespace Display;
 	using namespace World;
-	
-	// Flash the snake
-	bool on = false;
-	uint8_t dly = 60;
+	Game::state = Game::State::GameOver;
 
-	for (uint8_t i = 0; i < 17; ++i) {
-		if (!on) {
-			for (uint16_t i = 0; i < snake.length(); ++i) {
+	// Flash the snake
+	bool on { false };
+	uint8_t dly { 60 };
+
+	for (uint8_t i { 0 }; i < 17; ++i) {
+		if (!on) 
+			for (uint16_t i { 0 }; i < snake.length(); ++i) {
 				auto pos = toWorld(snake[i]);
 				display.fillRect(pos.x, pos.y, Scale, Scale, BLACK);
 			}
-		} else {
-			auto head = toWorld(snake.head());
-			display.fillRect(head.x, head.y, Scale, Scale, WHITE);
-			for (uint16_t i = 0; i < snake.length() - 1; ++i) {
-				
-				auto pos = toWorld(snake[i]);
-				
-				if (i == snake.length() - 2) {
-					display.fillRect(pos.x + 2, pos.y + 2, Scale - 2, Scale - 2, WHITE);
+		else 
+			drawSnake(true);
 
-				} else if (i == snake.length() - 1) {
-					display.fillRect(pos.x + 3, pos.y + 3, Scale - 3, Scale - 3, WHITE);
-
-				} else {
-					display.fillRect(pos.x + 1, pos.y + 1, Scale - 1, Scale - 1, WHITE);
-				}
-			}
-		}
 		display.display();
 		on = !on;
 		delay(dly);
@@ -666,7 +725,6 @@ void doGameOver() {
 	}
 	delay(350);
 
-	uint8_t rectX1 { 38 }, rectY1 { 28 }, rectX2 { 58 }, rectY2 { 12 };
     
 	display.clearDisplay();
     display.setCursor(40, 30);
@@ -682,6 +740,7 @@ void doGameOver() {
 		Score::high = Score::current;
 		EEPROM.write(0, Score::high / 10);
 	}
+	uint8_t rectX1 { 38 }, rectY1 { 28 }, rectX2 { 58 }, rectY2 { 12 };
 
     for (uint8_t i = 0; i <= 16; ++i) { // this is to draw rectangles around game over
 
@@ -695,7 +754,7 @@ void doGameOver() {
 
 		tone(Pin::SOUND, i * 200, 3);
 	}
-    
+
 	display.display();          
 
 	rectX1 = 0;   // set start position of line
@@ -703,7 +762,7 @@ void doGameOver() {
 	rectX2 = 0;
 	rectY2 = 63;
 
-	for (uint8_t i = 0; i <= 127; i++) {
+	for (uint8_t i{0}; i <= 127; i++) {
 		
 		display.drawLine(rectX1, rectY1, rectX2, rectY2, BLACK); 
 		++rectX1;
@@ -711,12 +770,40 @@ void doGameOver() {
 		display.display();                          
     }
     
-	display.clearDisplay();
 	lastDirectionPressed = Direction::NONE;
-	doSplashScreen();		// wait for player to start game
-	resetGameParameters();
+	doSplashScreen();		// wait for player to re-start game
 }
 
+
+void doPaused() {
+
+	using namespace Display;
+
+	// Draw a box.
+	Point<uint8_t> boxSize { 20, 76 };
+	display.fillRect((Display::Width / 2) - (boxSize.x / 2) , (Display::Height / 2) - (boxSize.y / 2), boxSize.x, boxSize.y, BLACK);
+	display.drawRect((Display::Width / 2) - (boxSize.x / 2) , (Display::Height / 2) - (boxSize.y / 2), boxSize.x, boxSize.y, WHITE);
+
+	// Write paused.
+	display.setTextSize(2);
+	display.setCursor((Display::Width / 2) - (boxSize.x / 2) + 3 , (Display::Height / 2) + 3 - (boxSize.y / 2));
+	display.print(F("Paused"));
+
+	// Display
+	display.display();
+
+	// Wait while paused.
+	while(Game::state == Game::State::Paused) {}
+
+	// Redraw everything.
+	display.setTextSize(1);
+
+	display.fillRect((Display::Width / 2) - (boxSize.x / 2) , (Display::Height / 2) - (boxSize.y / 2), boxSize.x, boxSize.y, BLACK);
+
+	drawSnake(true);
+	drawScran();
+	display.display();
+}
 
 
 #if (DEBUG == 1)
@@ -741,4 +828,17 @@ const __FlashStringHelper* directionToString(Direction d) {
 		default: return F("error");
 	}
 }
+
+const __FlashStringHelper* stateToString(Game::State g) {
+	using namespace Game;
+	switch (g) {
+		case State::EntrySplash: 	return F("Entry"); break;
+		case State::Paused:			return F("Pause"); break;
+		case State::Running:		return F("Run"); break;
+		case State::GameOver:		return F("Over"); break;
+		case State::Error:			
+		default: 					return F("Error");
+	}
+}
+
 #endif

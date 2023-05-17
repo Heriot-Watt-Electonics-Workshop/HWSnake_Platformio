@@ -23,6 +23,7 @@ struct Point
 
 	// Override equality operator to compare points.
 	bool operator==(const Point& other) const { return (other.y == y && other.x == x); }
+	bool operator!=(const Point& other) const { return !(*this == other); }
 	// Override addition assignment operator to add and assign.
 	void operator+=(const Point& other) { y += other.y; x += other.x; }
 	void operator-=(const Point& other) { y -= other.y; x -= other.x; }

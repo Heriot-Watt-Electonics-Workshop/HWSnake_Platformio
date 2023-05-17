@@ -3,11 +3,34 @@
 
 #include <Arduino.h>
 #include "globals.hpp"
-#include "Point.hpp"
+#include "Geometry.hpp"
 #include "error.hpp"
 
-// constexpr const uint16_t MAX_SNAKE_SEGMENTS { 256 };
-// constexpr const uint8_t SNAKE_DATA_SIZE { MAX_SNAKE_SEGMENTS / 4 };
+
+
+// // Split boolean value return type.
+// template <typename T>
+// struct OptionalCOORD {
+// 	bool _true;
+// 	T val;
+// };
+
+template <typename DATA_TYPE>
+struct OptionalPoint : protected Point<DATA_TYPE> {
+private:
+	const bool mHasValue { true };
+public:
+	OptionalPoint(const DATA_TYPE y, const DATA_TYPE x) :Point<DATA_TYPE>{y, x} { }
+	OptionalPoint(const Point<DATA_TYPE>& p) : Point<DATA_TYPE>{p} { }
+	OptionalPoint() : mHasValue{ false } { }
+	bool hasValue() const { return hasValue; }
+	bool isEmpty() const { return !hasValue; }
+	const Point<DATA_TYPE> getValue() const { return {this->y, this->x}; }
+	operator bool() { return mHasValue; }
+};
+
+
+
 
 
 // A crumb is half of a nibble which is half of a byte so it is essentially 2-bits.
@@ -85,8 +108,8 @@ public:
     const POINT_TYPE pop();    
 	// Access index using subscript operator.
 	const POINT_TYPE operator[](size_t index) const;
-	// Point is in the snake.
-	bool pointIsInside(const POINT_TYPE& p);
+	// Point is in the snake. and return detected point.
+	OptionalPoint<POINT_DATA_TYPE> pointIsInside(const POINT_TYPE& p);
 
 #if (DEBUG == YES)
 	size_t printTo(Print& p) const;
@@ -97,8 +120,8 @@ public:
 template <uint8_t SNAKE_DATA_SIZE, typename POINT_TYPE>
 bool Snake<SNAKE_DATA_SIZE, POINT_TYPE>::push(const POINT_TYPE& p) {
     
-	DEBUG_PRINT("Len: ");
-	DEBUG_PRINTLN(m_length);
+	//DEBUG_PRINT("Len: ");
+	//DEBUG_PRINTLN(m_length);
 	if (full()) { return false; } // Basically if full don't add more.
 
 	if (m_length > 0) {  
@@ -132,6 +155,7 @@ template <uint8_t SNAKE_DATA_SIZE, typename POINT_TYPE>
 const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pop() {
 
     if (empty()) { return POINT_TYPE { 0, 0 }; } // Should never be empty in the game.
+
     DEBUG_PRINT_FLASH("Len: ");
 	DEBUG_PRINTLN(m_length);
 	const POINT_TYPE rval = m_tail;
@@ -147,7 +171,7 @@ const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pop() {
 		memstart.crumb = memend.crumb = 0;
 		return rval; 
 	} // Length of 2 so tail set to head and no need to adjust the buffer.
-    
+    DEBUG_PRINTLN("p");
     switch(~memstart.getValue()) {
         
         case Direction::UP: m_tail += { 1, 0 }; break;
@@ -165,9 +189,11 @@ const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pop() {
 	
 //	DEBUG_PRINTLN_FLASH("m_length--");
     m_length--;
+	DEBUG_PRINTLN("r");
     return rval;
 }
 
+#pragma message "Would be more efficient if index was counted from closest end of snake."
 template <uint8_t SNAKE_DATA_SIZE, typename POINT_TYPE>
 const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::operator[](size_t index) const {
 	// we are talking head to tail index here.
@@ -204,12 +230,10 @@ const POINT_TYPE Snake<SNAKE_DATA_SIZE, POINT_TYPE>::operator[](size_t index) co
 
 
 template <uint8_t SNAKE_DATA_SIZE, typename POINT_TYPE>
-bool Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pointIsInside(const POINT_TYPE& p) {
+OptionalPoint<POINT_DATA_TYPE> Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pointIsInside(const POINT_TYPE& p) {
 	
-	//CrumbPtr cp { memend };
-
-	if (p == m_head) return true;
-	if (m_length == 1) return false;
+	if (p == m_head) return { m_head };
+	if (m_length == 1) return OptionalPoint<POINT_DATA_TYPE>();
 	
 	//DEBUG_PRINT_FLASH("p: ");
 	//DEBUG_PRINTLN(p);
@@ -217,9 +241,11 @@ bool Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pointIsInside(const POINT_TYPE& p) {
 	auto segment {m_head};
 	auto cp { memend };
 	--cp;
-
-	// Check cp still falls within the usable data.	
-	//if (cp.ptr < data) cp.ptr = data + (sizeof(data) - 1);
+	auto end { memstart };
+	// deal with the below afterwards by returning the colliding point and discarding
+	// if it is the tail.
+	//++end; // We want to end just before tail because tail will move out of the way.
+	//if (end.ptr > data + sizeof(data) - 1) end.ptr = data;
 
 //	DEBUG_PRINT_FLASH("memstart: "); DEBUG_PRINTLN(memstart);
 //	DEBUG_PRINT_FLASH("memend: "); DEBUG_PRINTLN(memend);
@@ -240,11 +266,11 @@ bool Snake<SNAKE_DATA_SIZE, POINT_TYPE>::pointIsInside(const POINT_TYPE& p) {
              default: exit(1);
         }
 //		DEBUG_PRINT(segment);
-		if (segment == p) return true;
-		if (cp == memstart) break;
+		if (segment == p) return { segment };
+		if (cp == end) break;
 	}
 	//DEBUG_PRINTLN();
-	return false;
+	return OptionalPoint<POINT_DATA_TYPE>{};
 }
 
 
