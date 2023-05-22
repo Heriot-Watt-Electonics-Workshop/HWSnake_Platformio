@@ -27,11 +27,10 @@
 #define USE_TIMER_1 true
 #include "TimerInterrupt.h"
 #include "globals.hpp"
-#include "Geometry.hpp"
 #include "Snake.hpp"
 #include "error.hpp"
 
-using PointType = Point<POINT_DATA_TYPE>;
+
 using SnakeType = Snake<SNAKE_DATA_SIZE, PointType>;
 
 // This is our snake.
@@ -41,9 +40,9 @@ volatile Direction lastDirectionPressed { Direction::NONE };
 
 
 
-namespace Display {	
+namespace Display {
 	// Initialize the display.
-	Adafruit_SSD1306 display( Width, Height );  
+	Adafruit_SSD1306 display( dspRect.width(), dspRect.height() );  
 }
 
 
@@ -54,9 +53,10 @@ namespace World {
 	PointType scranPos {};
 
 	// Get a random point.  This is a C++ lambda function.
-	auto getRandomPoint { []()->PointType { 
-		return { static_cast<POINT_DATA_TYPE>( random(World::minY, World::maxY) ),
-				 static_cast<POINT_DATA_TYPE>( random(World::minX, World::maxX) ) }; 
+	auto getRandomPoint { []()->PointType {
+
+		return { static_cast<POINT_DATA_TYPE>( random(World.minY(), World.maxY()) ),
+				 static_cast<POINT_DATA_TYPE>( random(World.minX(), World.maxX()) ) }; 
 	}};
 
 	// Converts game coordinates to display coordinates.
@@ -229,13 +229,17 @@ void doSplashScreen();
 void doPaused();
 
 
+void doHighScore();
+
+
+
 #if (DEBUG == YES)
 /**
  * @brief Convert directions to string.
  * @param d The direction to convert.
  * @returns String represenatation of direction.
  */
-const __FlashStringHelper* directionToString(Direction d);
+const __FlashStringHelper* directionAsString(Direction d);
 
 const __FlashStringHelper* stateToString(Game::State g);
 #endif
@@ -270,6 +274,7 @@ void setup() {
 	// DEBUG_PRINT_FLASH(", "); DEBUG_PRINT(World::maxY);
 	// DEBUG_PRINTLN_FLASH(")");
 
+//	EEPROM.write(0,0);
     display.clearDisplay();   				// start with a clean display
     display.setTextColor(WHITE);			// set up text color rotation size etc  
     display.setRotation(0); 
@@ -287,6 +292,7 @@ void setup() {
 	DEBUG_PRINT_FLASH("C++ Version: ");
 	DEBUG_PRINTLN(__cplusplus);
 
+//	doHighScore();
     doSplashScreen();    		// display the snake start up screen
 
 	// Splash screen takes care of resetting the game.
@@ -294,7 +300,9 @@ void setup() {
 	//redrawAll();
 }
 
+#if (DEBUG == YES)
 static uint16_t counter{};
+#endif
 
 // Main Loop
 void loop() {
@@ -397,21 +405,21 @@ void drawDisplayBackground() {
 	display.print(F("Score:"));
 	display.print(Score::current);
 	
-	display.setCursor((Width / 2) + 2, 1);	
+	display.setCursor((dspRect.width() / 2) + 2, 1);	
 	display.print(F("High:"));
 	display.print(Score::high);
 
 	// draw play area
 	//      pos  1x, 1y, 2x, 2y, colour
-	display.drawLine(0, 0, Width - 1, 0, WHITE); 						// very top border
-	display.drawLine((Width / 2) - 1, 0, (Width / 2) - 1, 9, WHITE); 	// score seperator
-	display.fillRect(0, 9, Width - 1, 2, WHITE); 						// below text border
+	display.drawLine(0, 0, dspRect.width() - 1, 0, WHITE); 						// very top border
+	display.drawLine((dspRect.width() / 2) - 1, 0, (dspRect.width() / 2) - 1, 9, WHITE); 	// score seperator
+	display.fillRect(0, 9, dspRect.width() - 1, 2, WHITE); 						// below text border
 	display.drawLine(0, 0, 0, 9, WHITE);
-	display.drawLine(Width - 1, 0, Width - 1, 9, WHITE);
+	display.drawLine(dspRect.width() - 1, 0, dspRect.width() - 1, 9, WHITE);
 
-	display.fillRect(0, Height - 3, Width - 1, 3, WHITE);				// bottom border
-	display.fillRect(0, 9, 3, Height - 1, WHITE); 						// left border
-	display.fillRect(Width - 3, 9, 3, Height - 1, WHITE); 				// right border    
+	display.fillRect(0, dspRect.height() - 3, dspRect.width() - 1, 3, WHITE);			// bottom border
+	display.fillRect(0, 9, 3, dspRect.height() - 1, WHITE); 						// left border
+	display.fillRect(dspRect.width() - 3, 9, 3, dspRect.height() - 1, WHITE); 		// right border    
 }
 
 
@@ -431,9 +439,9 @@ void updateGame() {
 	auto scranEaten {false};
 
 // Update the Snake's direction from button input if not same or opposite direction.
-	DEBUG_PRINTLN(directionToString(lastDirectionPressed));
+	DEBUG_PRINTLN(directionAsString(lastDirectionPressed));
 	if (lastDirectionPressed != snake.getDirection()) {
-		DEBUG_PRINTLN(directionToString(~lastDirectionPressed));
+		DEBUG_PRINTLN(directionAsString(~lastDirectionPressed));
 		if (lastDirectionPressed != ~snake.getDirection())
 			snake.setDirection(lastDirectionPressed);
 	}
@@ -534,8 +542,8 @@ void drawARandomLine(uint8_t colour) {
 
 	auto getRand { [](uint8_t max) -> uint8_t { return static_cast<uint8_t>(random(0, max)); } };
 
-	PointType start { getRand(Display::Height), getRand(Display::Width) };
-	PointType end   { getRand(Display::Height), getRand(Display::Width) };
+	PointType start { getRand(Display::dspRect.maxY()), getRand(Display::dspRect.maxX()) };
+	PointType end   { getRand(Display::dspRect.maxY()), getRand(Display::dspRect.maxX()) };
 	
 	Display::display.drawLine(start.x, start.y, end.x, end.y, colour);
 }
@@ -669,21 +677,23 @@ bool detectSelfCollision(const PointType& newHead) {
 
 bool detectPlayerOutOfArea(const PointType& newHead) {
 
+	using World::World;
+
 #if (DEBUG == 1)
 	bool rVal;
 	if constexpr(Utility::is_unsigned<POINT_DATA_TYPE>::value)
-		rVal = (( newHead.x >= World::maxX  ) || ( newHead.y >= World::maxY ));
+		rVal = (( newHead.x >= World.maxX()  ) || ( newHead.y >= World.maxY() ));
 	else 
-		rVal = (( newHead.x >= World::maxX ) || ( newHead.x < 0 ) || 
-				( newHead.y >= World::maxY ) || ( newHead.y < 0 ));
+		rVal = (( newHead.x >= World.maxX() ) || ( newHead.x < 0 ) || 
+				( newHead.y >= World.maxY() ) || ( newHead.y < 0 ));
 	if (rVal) {
 		DEBUG_PRINT_FLASH("head pos: ");
-		Point<uint8_t> newHeadScaled { static_cast<uint8_t>(newHead.y / World::Scale), static_cast<uint8_t>(newHead.x / World::Scale) };
+		PointType newHeadScaled { static_cast<uint8_t>(newHead.y / World::Scale), static_cast<uint8_t>(newHead.x / World::Scale) };
 		DEBUG_PRINTLN(newHeadScaled);
 		DEBUG_PRINT_FLASH("World min/max: ");
-		Point<uint8_t> WorldMin { World::minY, World::minX };
+		PointType WorldMin { World.minY(), World.minX() };
 		DEBUG_PRINT(WorldMin);
-		Point<uint8_t> WorldMax { World::maxY, World::maxX };
+		PointType WorldMax { World.maxY(), World.maxX() };
 		DEBUG_PRINT_FLASH(", ");
 		DEBUG_PRINTLN( WorldMax );
 		DEBUG_PRINTLN_FLASH("Detected out of area");
@@ -691,9 +701,9 @@ bool detectPlayerOutOfArea(const PointType& newHead) {
 	return rVal;
 #else
 	if constexpr(Utility::is_unsigned<POINT_DATA_TYPE>::value)
-		return (( newHead.y >= World::maxY ) || ( newHead.x >= World::maxX ));
-	else return (( newHead.x >= World::maxX ) || ( newHead.x < 0 ) ||
-				( newHead.y >= World::maxY || newHead.y < 0 ));
+		return (( newHead.y >= World.maxY() ) || ( newHead.x >= World.maxX() ));
+	else return (( newHead.x >= World.maxX() ) || ( newHead.x < 0 ) ||
+				( newHead.y >= World.maxY() || newHead.y < 0 ));
 #endif
 }
 
@@ -725,21 +735,16 @@ void doGameOver() {
 	}
 	delay(350);
 
-    
 	display.clearDisplay();
     display.setCursor(40, 30);
     display.setTextSize(1);
     
 	tone(Pin::SOUND, 2000, 50);
-    display.print(F("GAME "));
+    display.print(F("GAME OVER"));
     delay(500);
 	tone(Pin::SOUND, 1000, 50);
-    display.print(F("OVER"));
+//    display.print(F("OVER"));
 
-	if (Score::current > Score::high) {
-		Score::high = Score::current;
-		EEPROM.write(0, Score::high / 10);
-	}
 	uint8_t rectX1 { 38 }, rectY1 { 28 }, rectX2 { 58 }, rectY2 { 12 };
 
     for (uint8_t i = 0; i <= 16; ++i) { // this is to draw rectangles around game over
@@ -762,13 +767,23 @@ void doGameOver() {
 	rectX2 = 0;
 	rectY2 = 63;
 
-	for (uint8_t i{0}; i <= 127; i++) {
+	for (uint8_t i{0}; i <= 64; i++) {
 		
 		display.drawLine(rectX1, rectY1, rectX2, rectY2, BLACK); 
 		++rectX1;
 		++rectX2;
+		display.drawLine(rectX1, rectY1, rectX2, rectY2, BLACK);
+		++rectX1;
+		++rectX2;
+
 		display.display();                          
     }
+
+	if (Score::current > Score::high) {
+		Score::high = Score::current;
+		doHighScore();
+		EEPROM.write(0, Score::high / 10);
+	}
     
 	lastDirectionPressed = Direction::NONE;
 	doSplashScreen();		// wait for player to re-start game
@@ -780,13 +795,13 @@ void doPaused() {
 	using namespace Display;
 
 	// Draw a box.
-	Point<uint8_t> boxSize { 20, 76 };
-	display.fillRect((Display::Width / 2) - (boxSize.x / 2) , (Display::Height / 2) - (boxSize.y / 2), boxSize.x, boxSize.y, BLACK);
-	display.drawRect((Display::Width / 2) - (boxSize.x / 2) , (Display::Height / 2) - (boxSize.y / 2), boxSize.x, boxSize.y, WHITE);
+	SizeType boxSize { 20, 76 };
+	display.fillRect((dspRect.width() / 2) - (boxSize.x / 2) , (dspRect.height() / 2) - (boxSize.y / 2), boxSize.x, boxSize.y, BLACK);
+	display.drawRect((dspRect.width() / 2) - (boxSize.x / 2) , (dspRect.height() / 2) - (boxSize.y / 2), boxSize.x, boxSize.y, WHITE);
 
 	// Write paused.
 	display.setTextSize(2);
-	display.setCursor((Display::Width / 2) - (boxSize.x / 2) + 3 , (Display::Height / 2) + 3 - (boxSize.y / 2));
+	display.setCursor((dspRect.width() / 2) - (boxSize.x / 2) + 3 , (dspRect.height() / 2) + 3 - (boxSize.y / 2));
 	display.print(F("Paused"));
 
 	// Display
@@ -798,7 +813,7 @@ void doPaused() {
 	// Redraw everything.
 	display.setTextSize(1);
 
-	display.fillRect((Display::Width / 2) - (boxSize.x / 2) , (Display::Height / 2) - (boxSize.y / 2), boxSize.x, boxSize.y, BLACK);
+	display.fillRect((dspRect.width() / 2) - (boxSize.x / 2) , (dspRect.height() / 2) - (boxSize.y / 2), boxSize.x, boxSize.y, BLACK);
 
 	drawSnake(true);
 	drawScran();
@@ -806,31 +821,119 @@ void doPaused() {
 }
 
 
-#if (DEBUG == 1)
-const __FlashStringHelper* directionToString(Direction d) {
+void doHighScore() {
+
+	// Try with 4 rectangles.
+	using World::World;
+	using namespace Display;
+
+	auto clear{ [](){ Display::display.clearDisplay(); }};
+	auto drawFilledRect{ [](const Rectangle<Point<int16_t>>& r, uint16_t COLOUR = WHITE){ 
+		Display::display.fillRect(r.origin().x, r.origin().y, r.width(), r.height(), COLOUR); }};
+	auto drawRect{ [](const Rectangle<Point<int16_t>>& r, uint16_t COLOUR = WHITE) { Display::display.drawRect(r.origin().x, r.origin().y, r.width(), r.height(), COLOUR); }};
+	auto textBoundsRect { [](const char* text, int16_t y, int16_t x) {
+		
+		int16_t x1, y1;
+		uint16_t h, w;
+		display.getTextBounds(text, x, y, &x1, &y1, &w, &h);
+		return Rectangle<Point<int16_t>>{ {y1, x1}, { static_cast<int16_t>(h), static_cast<int16_t>(w) }};
+	} };
+
+	char text[6] { " New " };
+	bool flipped{false};
+	const SizeType growthSpeed { 3, 6 };
+	clear();
+	display.display();
+	const auto startTime { millis() };
+	enum class Stage { Waiting, Growing, DisplayFirstText };
+	Stage stage { Stage::Waiting };
+	Rectangle<Point<uint8_t>> textRect {{0,0}};
+	display.setTextSize(3);
+	const auto finalSize { textBoundsRect("Score", 0, 0).grow(5, 6).size() };
+//	DEBUG_PRINTLN(finalSize);
+//	DEBUG_PRINTLN(textRect);
+
+	while (true) {
+
+		auto timeElapsed { millis() - startTime };
+		if (timeElapsed > 9000) break;
+		else if (timeElapsed > 5700) sprintf(text, "%u", Score::high);
+		else if (timeElapsed > 4100) sprintf(text, "Score");
+		else if (timeElapsed > 3500) sprintf(text, "High");
+		else if (timeElapsed > 2800) stage = Stage::DisplayFirstText;
+		else if (timeElapsed > 1000) stage = Stage::Growing;
+
+
+		Rectangle<Point<int16_t>> rInner{{0, 0}};
+		Rectangle<Point<int16_t>> rOuter {{dspRect.height() >> 1, dspRect.width() >> 1}};
+
+		for (uint8_t i{0}; rOuter.width() <= dspRect.width(); ++i) {
+
+			rOuter.centreOn(dspRect);
+			rInner.centreOn(dspRect);
+
+			drawFilledRect(rOuter, flipped);
+			drawFilledRect(rInner, !flipped);
+
+			drawFilledRect(textRect, WHITE);
+			auto outline { textRect };
+			drawRect(outline, BLACK);
+			outline.grow(-1);
+			drawRect(outline, BLACK);
+
+			rInner.grow(growthSpeed.y, growthSpeed.x);
+			rOuter.grow(growthSpeed.y, growthSpeed.x);
+
+
+			switch (stage) {
+				case Stage::Waiting:
+					break;
+				case Stage::Growing:
+					if (textRect.width() < finalSize.x) {
+						if (textRect.height() < finalSize.y) 
+							textRect.grow(1, 1);
+						else textRect.grow(0, 3); 
+						
+						textRect.centreOn(dspRect);
+						DEBUG_PRINTLN(textRect);
+					}
+					break;
+				case Stage::DisplayFirstText: {
+						display.setTextColor(BLACK);
+						auto bounds { textBoundsRect(text, 0,0) };
+						bounds.centreOn(dspRect);
+						display.setCursor(bounds.origin().x, bounds.origin().y);
+						display.write(text);
+						break;
+				}
+				default: break;
+			}
+			display.display();
+		}
+		flipped = !flipped;
+	}
+	display.setTextSize(1);
+	delay(1000);
+}
+
+
+#if (DEBUG == YES)
+const __FlashStringHelper* directionAsString(Direction d) {
 
 	switch (d) {
-		case Direction::UP:
-			return F("Up");
-			break;
-		case Direction::DOWN:
-			return F("Down");
-			break;
-		case Direction::LEFT:
-			return F("Left");
-			break;
-		case Direction::RIGHT:
-			return F("Right");
-			break;
-		case Direction::NONE:
-			return F("None");
-			break;
-		default: return F("error");
+		case Direction::UP:		return F("Up"); break;
+		case Direction::DOWN: 	return F("Down"); break;
+		case Direction::LEFT: 	return F("Left"); break;
+		case Direction::RIGHT: 	return F("Right"); break;
+		case Direction::NONE: 	return F("None"); break;
+		default:				return F("Error");
 	}
 }
 
 const __FlashStringHelper* stateToString(Game::State g) {
+
 	using namespace Game;
+	
 	switch (g) {
 		case State::EntrySplash: 	return F("Entry"); break;
 		case State::Paused:			return F("Pause"); break;
@@ -842,3 +945,4 @@ const __FlashStringHelper* stateToString(Game::State g) {
 }
 
 #endif
+

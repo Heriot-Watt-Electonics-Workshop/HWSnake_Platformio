@@ -7,7 +7,6 @@
 #include "error.hpp"
 
 
-
 // // Split boolean value return type.
 // template <typename T>
 // struct OptionalCOORD {

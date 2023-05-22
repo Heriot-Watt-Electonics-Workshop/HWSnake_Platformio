@@ -1,20 +1,21 @@
 #ifndef __GLOBALS_HPP_
 
-#include "Arduino.h"
+#include <Arduino.h>
+#include "Geometry.hpp"
 
 // Defined for readability.
 #define YES 1
 #define NO 0
 
 // This switches on or off serial debug output.
-#define DEBUG YES // or NO
-#define LIVE_ERRORS YES
+#define DEBUG NO // or NO
+#define LIVE_ERRORS NO
 
 // This determines the size of the array used to store the snake.  The
 // snake may be 4 times this size + 1 for the head.  Maximum if all spaces 
 // were in the snake would be 160 sections so 40 bytes of data should be enough.
 #if (DEBUG == YES)
-constexpr uint8_t SNAKE_DATA_SIZE { 25 };
+constexpr uint8_t SNAKE_DATA_SIZE { 5 };
 #elif (DEBUG == NO)
 constexpr uint8_t SNAKE_DATA_SIZE { 40 };
 #endif
@@ -23,6 +24,9 @@ constexpr uint8_t SNAKE_DATA_SIZE { 40 };
 // int8_t will give a range of -127 to +128.
 // uint8_t will give a range of 0 to 255.
 using POINT_DATA_TYPE = uint8_t;
+using PointType = Point<POINT_DATA_TYPE>;
+using SizeType = PointType;
+using Rect = Rectangle<PointType>;
 
 
 // If you want sound. U will need a buzzer.
@@ -51,21 +55,7 @@ using POINT_DATA_TYPE = uint8_t;
 #endif // DEBUG
 
 
-
 namespace Utility {
-
-// A utility to tell if an integer type is signed or unsigned at runtime or compile time.
-template <typename T>
-struct is_signed {
-	static constexpr bool value { (T(-1) < T(0)) }; 
-};
-
-template <typename T>
-struct is_unsigned {
-	static constexpr bool value { (T(-1) > T(0)) };
-};
-
-
 
 #if (DEBUG == YES)
 // This class allows to print any integer type in binary format.
@@ -77,6 +67,7 @@ struct Binary : public Printable {
 	size_t printTo(Print& p) const;
 };
 #endif // (DEBUG == YES)
+
 }
 
 
@@ -94,11 +85,11 @@ namespace Pin {
 #endif
 }
 
-
 namespace Display {
 	constexpr uint8_t Address 	{ 0x3C };
-	constexpr uint8_t Width 	{ 128 };
-	constexpr uint8_t Height 	{ 64 };
+	constexpr Rect dspRect {{64, 128}};
+	// constexpr uint8_t Width 	{ 128 };
+	// constexpr uint8_t Height 	{ 64 };
 }
 
 
@@ -114,11 +105,12 @@ namespace World {
 	constexpr uint8_t yMaxOffset { 2 };
 
 	// How big the world is.
-	constexpr uint8_t minX  { 0 };
-	constexpr uint8_t maxX  { (Display::Width - xMinOffset - xMaxOffset) / Scale };
-	constexpr uint8_t minY  { 0 };
-	constexpr uint8_t maxY  { (Display::Height - yMinOffset - yMaxOffset) / Scale };
-
+	constexpr Rect World {
+			0,																// minY
+			0,																// minX
+			(Display::dspRect.height() - yMinOffset - yMaxOffset) / Scale,		// maxY
+			(Display::dspRect.width() - xMinOffset - xMaxOffset) / Scale 		// maxX
+	};
 }
 
 
