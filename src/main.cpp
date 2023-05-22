@@ -14,10 +14,7 @@
 
 
 // TODO:
-// Add rect struct
-// Nice hiscore window
 // Do you want splash screen to take care of cleaning up the game or something else.
-// Add a way to clear the hiscore.
 
 
 #include <Adafruit_GFX.h>
@@ -35,9 +32,9 @@ using SnakeType = Snake<SNAKE_DATA_SIZE, PointType>;
 
 // This is our snake.
 SnakeType snake {};
-// Pressing the button sets this variable.  It is volatile as it is updated from user input.
-volatile Direction lastDirectionPressed { Direction::NONE };
 
+// Pressing a button sets this variable.  It is volatile as it is updated from user input.
+volatile Direction lastDirectionPressed { Direction::NONE };
 
 
 namespace Display {
@@ -78,9 +75,10 @@ namespace Score {
 
 // Define a button.
 struct Button {
+
 	enum class State { pressed, notPressed };
 
-	constexpr static uint8_t readingPeriod_ms { 2 }; 	// Time between button reads.
+	constexpr static uint8_t readingPeriod_ms { 1 }; 	// Time between button reads.
 	constexpr static uint8_t triggerCount { 3 }; 		// Number of reads required to trigger a press. 
 
 	constexpr Button(uint8_t pin, Direction direction) : pin{ pin }, direction{ direction } {}
@@ -133,26 +131,24 @@ namespace Game {
  */
 inline bool detectPlayerAteScran();
 
-
 /**
  * @brief Check if the player left the game area.
- * @return true if yes.
+ * @param newHead A point describing where the new head will be.
+ * @return true if out of area else false.
  */
-inline bool detectPlayerOutOfArea(const PointType& newHead);
-
+bool detectPlayerOutOfArea(const PointType& newHead);
 
 /**
  * @brief Check if the player collided with himself.
- * @return false 
+ * @param newHead A point describing where the new head will be.
+ * @return true if a collision is deteced else false.
  */
-inline bool detectSelfCollision(const PointType& newHead);
-
+bool detectSelfCollision(const PointType& newHead);
 
 /**
  * @brief Run the game over sequence.
  */
 void doGameOver();
-
 
 /**
  * @brief Draws a random Line
@@ -160,22 +156,19 @@ void doGameOver();
  */
 void drawARandomLine(uint8_t colour = WHITE);
 
-
 /**
  * @brief Draws the background for the game.
  */
 void drawDisplayBackground();
-
 
 /**
  * @brief Draw the food.
  */
 void drawScran();
 
-
 /**
  * @brief Draw the Snake.
- * @param wholeSnake Draws every segment when normally operation is optimized.
+ * @param wholeSnake A boolean value. If true draws every segment else by default or if false optimizes the operation.
  */
 void drawSnake(bool wholeSnake = false);
 
@@ -191,30 +184,27 @@ inline void placeRandomScran();
 
 /**
  * @brief Read and debounce a button.
+ * @param Button Pointer to the button to be read.
  */
 void readButton(Button const* button);
 
-
 /**
- * @brief Read the buttons required.
+ * @brief Read all of the buttons.
  */
 void readButtons();
 
-
 /**
- * @brief Reset snake, score and food.
+ * @brief Reset the snake, score and food.
  */
 void resetGameParameters();
-
 
 /**
  * @brief The game loop.
  */
 void updateGame();
 
-
 /**
- * @brief Update the score.
+ * @brief Draws the updated score.
  */
 void drawUpdatedScore();
 
@@ -228,7 +218,9 @@ void doSplashScreen();
  */
 void doPaused();
 
-
+/**
+ * @brief Does a fancy new high score animation.
+ */
 void doHighScore();
 
 
@@ -241,13 +233,17 @@ void doHighScore();
  */
 const __FlashStringHelper* directionAsString(Direction d);
 
+/**
+ * @brief Convert game state to a string.
+ * @param g The game state to convert.
+ * @return const __FlashStringHelper*.
+ */
 const __FlashStringHelper* stateToString(Game::State g);
 #endif
 
 
 
-
-//	Setup
+//	Setup. Called from Arduino API.  Runs once when the program starts.
 void setup() {
 
 	using namespace Display;
@@ -265,21 +261,24 @@ void setup() {
 
 #if (DEBUG == YES)
 	Serial.begin(9600);
-#endif
+#endif // (DEBUG == YES)
 #if (LIVE_ERRORS == YES) // Allows Errors to be displayed on screen.
 	Error::initErrors(display);
-#endif
+#endif // (LIVE_ERRORS == YES)
+#if (CLEAR_HIGH_SCORE == YES)
+	EEPROM.update(0, 0);
+#endif // (CLEAR_HIGH_SCORE == YES)
+
     delay(Timing::gameUpdateTime_ms);
 	// DEBUG_PRINT_FLASH("Size: ("); DEBUG_PRINT(World::maxX);
 	// DEBUG_PRINT_FLASH(", "); DEBUG_PRINT(World::maxY);
 	// DEBUG_PRINTLN_FLASH(")");
 
-//	EEPROM.write(0,0);
     display.clearDisplay();   				// start with a clean display
     display.setTextColor(WHITE);			// set up text color rotation size etc  
     display.setRotation(0); 
     display.setTextWrap(false);
-    display.dim(0);         				// set the display brighness
+    display.dim(false);         			// set the display brighness
 
 	// Setup the buttons pins.
 	for (const auto* button : Buttons::All) {
@@ -292,27 +291,22 @@ void setup() {
 	DEBUG_PRINT_FLASH("C++ Version: ");
 	DEBUG_PRINTLN(__cplusplus);
 
-//	doHighScore();
     doSplashScreen();    		// display the snake start up screen
-
-	// Splash screen takes care of resetting the game.
-	//resetGameParameters();
-	//redrawAll();
 }
 
 #if (DEBUG == YES)
 static uint16_t counter{};
 #endif
 
-// Main Loop
+// Main Loop called from the Arduino API.
 void loop() {
 	auto tNow { millis() };
 // Game Loop
 	if (tNow - Timing::lastGameUpdatedTime > Timing::gameUpdateTime_ms) {
 //		DEBUG_PRINTLN_FLASH("SNAKE AT START:"); DEBUG_PRINTLN(snake);
 		DEBUG_PRINT_FLASH("Turn: "); DEBUG_PRINTLN(++counter); 
-		if (Game::state == Game::State::Running) updateGame();
-		else if (Game::state == Game::State::Paused) doPaused();
+		if 		(Game::state == Game::State::Running) 	updateGame();
+		else if (Game::state == Game::State::Paused) 	doPaused();
 		else if (Game::state == Game::State::Error) { 
 			Error::displayError(__LINE__, __FILE__, "In Error State");
 			DEBUG_PRINT_FLASH("Error");
@@ -340,11 +334,13 @@ void readButton(Button const* button) {
 						Game::state = Game::State::Paused;
 					else if (Game::state == Game::State::Paused)
 						Game::state = Game::State::Running;
+				} else if (Game::state == Game::State::EntrySplash)
+						lastDirectionPressed = Direction::RIGHT;
 				} else { 
 					lastDirectionPressed = button->direction;
 				}
 				button->state = Button::State::pressed;
-			}
+			
 		}
 	} else if (button->state == Button::State::pressed && (++button->unPressedCount >= Button::triggerCount / Button::readingPeriod_ms)) {
 

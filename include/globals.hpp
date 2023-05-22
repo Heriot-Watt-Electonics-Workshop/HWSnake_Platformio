@@ -9,7 +9,10 @@
 
 // This switches on or off serial debug output.
 #define DEBUG NO // or NO
-#define LIVE_ERRORS NO
+#define LIVE_ERRORS YES
+
+// Write yes to remove the high score.
+#define CLEAR_HIGH_SCORE YES
 
 // This determines the size of the array used to store the snake.  The
 // snake may be 4 times this size + 1 for the head.  Maximum if all spaces 
@@ -88,8 +91,6 @@ namespace Pin {
 namespace Display {
 	constexpr uint8_t Address 	{ 0x3C };
 	constexpr Rect dspRect {{64, 128}};
-	// constexpr uint8_t Width 	{ 128 };
-	// constexpr uint8_t Height 	{ 64 };
 }
 
 
@@ -106,8 +107,8 @@ namespace World {
 
 	// How big the world is.
 	constexpr Rect World {
-			0,																// minY
-			0,																// minX
+			0,																	// minY
+			0,																	// minX
 			(Display::dspRect.height() - yMinOffset - yMaxOffset) / Scale,		// maxY
 			(Display::dspRect.width() - xMinOffset - xMaxOffset) / Scale 		// maxX
 	};
@@ -124,36 +125,35 @@ enum class Direction : uint8_t {
 // Flipping the bits reverses the Direction.
 Direction operator~(const Direction direction);
 
-#if (DEBUG == YES)
-String DirectionAsString(const Direction d);
-#endif // (DEBUG == YES)
+// #if (DEBUG == YES)
+// String DirectionAsString(const Direction d);
+// #endif // (DEBUG == YES)
 
 
 // Template function definitions are defined in the header.
 
 namespace Utility {
 
-#if (DEBUG == YES)
-template<typename T>
-size_t Binary<T>::printTo(Print& p) const {
+//#if (DEBUG == YES)
+// template<typename T>
+// size_t Binary<T>::printTo(Print& p) const {
 
-	char binStr[sizeof(T) + 2];
-	T b { this->value };
-	T rev {0};
+// 	char binStr[sizeof(T) + 2];
+// 	T b { this->value };
+// 	T rev {0};
 
-    for (uint16_t i{}; i < static_cast<uint16_t>(sizeof(T)) * 8; ++i) {
-        rev = rev << 1;
-        rev += (b % 2);
-        b = b >> 1;
-    }
-    for (uint16_t i{}; i < static_cast<uint16_t>(sizeof(T)) * 8; ++i) {
-    	binStr[i] = (rev % 2);
-        rev = rev >> 1;
-    }
-	return p.print(binStr);
-}
-#endif // (DEBUG == YES)
-
+//     for (uint16_t i{}; i < static_cast<uint16_t>(sizeof(T)) * 8; ++i) {
+//         rev = rev << 1;
+//         rev += (b % 2);
+//         b = b >> 1;
+//     }
+//     for (uint16_t i{}; i < static_cast<uint16_t>(sizeof(T)) * 8; ++i) {
+//     	binStr[i] = (rev % 2);
+//         rev = rev >> 1;
+//     }
+// 	return p.print(binStr);
+// }
+// #endif // (DEBUG == YES)
 }
 
 #define __GLOBALS_HPP_
