@@ -99,7 +99,7 @@ namespace Buttons {
 						bDown	{ Pin::DOWN, 	Direction::DOWN },
 						bLeft	{ Pin::LEFT, 	Direction::LEFT },
 						bRight	{ Pin::RIGHT, 	Direction::RIGHT },
-						bMiddle { Pin::MIDDLE,	Direction::NONE };
+						bMiddle { Pin::MIDDLE,	Direction::MIDDLE };
 
 	constexpr Button const* All[] { &bUp, &bDown, &bLeft, &bRight, &bMiddle };
 }
@@ -224,6 +224,44 @@ void doPaused();
 void doHighScore();
 
 
+// New drawing utility functions.
+
+void clear() { Display::display.clearDisplay(); }
+
+template <typename PointT>
+void drawFilledRect(const Rectangle<PointT>& r, uint16_t COLOUR = WHITE) {
+	auto& d = Display::display;
+	d.fillRect(r.origin().x, r.origin().y, r.width(), r.height(), COLOUR);
+}
+
+template <typename PointT>
+void drawRndFilledRect(const Rectangle<PointT>& r, int16_t radius, uint16_t COLOUR = WHITE) {
+	auto& d = Display::display;
+	d.fillRoundRect(r.origin().x, r.origin().y, r.width(), r.height(), radius, COLOUR);
+}
+
+template <typename PointT>
+void drawRect(const Rectangle<PointT>& r, uint16_t COLOUR = WHITE) { 
+	auto& d = Display::display;
+	d.drawRect(r.origin().x, r.origin().y, r.width(), r.height(), COLOUR); 
+}
+
+template <typename PointT>
+void drawRndRect(const Rectangle<PointT>& r, int16_t radius, uint16_t COLOUR = WHITE) {
+	auto& d = Display::display;
+	d.drawRoundRect(r.origin().x, r.origin().y, r.width(), r.height(), radius, COLOUR);
+}
+
+template <typename PointT, typename DataT = decltype(PointT::x)>
+auto getTextBoundsRect(const char* text, int16_t y, int16_t x) {
+		
+	auto& d = Display::display;
+	int16_t x1, y1;
+	uint16_t h, w;
+	d.getTextBounds(text, x, y, &x1, &y1, &w, &h);
+	return Rectangle<PointT> { {static_cast<DataT>(y1), static_cast<DataT>(x1)}, { static_cast<DataT>(h), static_cast<DataT>(w) }};
+}
+
 
 #if (DEBUG == YES)
 /**
@@ -235,10 +273,10 @@ const __FlashStringHelper* directionAsString(Direction d);
 
 /**
  * @brief Convert game state to a string.
- * @param g The game state to convert.
+ * @param s The game state to convert.
  * @return const __FlashStringHelper*.
  */
-const __FlashStringHelper* stateToString(Game::State g);
+const __FlashStringHelper* stateAsString(Game::State s);
 #endif
 
 
@@ -274,7 +312,7 @@ void setup() {
 	// DEBUG_PRINT_FLASH(", "); DEBUG_PRINT(World::maxY);
 	// DEBUG_PRINTLN_FLASH(")");
 
-    display.clearDisplay();   				// start with a clean display
+    clear(); 								// start with a clean display
     display.setTextColor(WHITE);			// set up text color rotation size etc  
     display.setRotation(0); 
     display.setTextWrap(false);
@@ -300,8 +338,10 @@ static uint16_t counter{};
 
 // Main Loop called from the Arduino API.
 void loop() {
+
 	auto tNow { millis() };
-// Game Loop
+
+	// Game Loop
 	if (tNow - Timing::lastGameUpdatedTime > Timing::gameUpdateTime_ms) {
 //		DEBUG_PRINTLN_FLASH("SNAKE AT START:"); DEBUG_PRINTLN(snake);
 		DEBUG_PRINT_FLASH("Turn: "); DEBUG_PRINTLN(++counter); 
@@ -328,19 +368,20 @@ void readButton(Button const* button) {
 
 			if (button->state != Button::State::pressed) {
 
-				if (button == &Buttons::bMiddle && Game::state != Game::State::EntrySplash) {
-					DEBUG_PRINTLN_FLASH("Middle button pressed.");
-					if (Game::state == Game::State::Running)
-						Game::state = Game::State::Paused;
-					else if (Game::state == Game::State::Paused)
-						Game::state = Game::State::Running;
-				} else if (Game::state == Game::State::EntrySplash)
-						lastDirectionPressed = Direction::RIGHT;
-				} else { 
-					lastDirectionPressed = button->direction;
-				}
+				// if (button == &Buttons::bMiddle && Game::state != Game::State::EntrySplash) {
+				// 	DEBUG_PRINTLN_FLASH("Middle button pressed.");
+				// 	if (Game::state == Game::State::Running)
+				// 		Game::state = Game::State::Paused;
+				// 	else if (Game::state == Game::State::Paused)
+				// 		Game::state = Game::State::Running;
+				// } else if (Game::state == Game::State::EntrySplash)
+				// 		lastDirectionPressed = Direction::RIGHT;
+				// } else { 
+				// 	lastDirectionPressed = button->direction;
+				// }
+				lastDirectionPressed = button->direction;
 				button->state = Button::State::pressed;
-			
+			}
 		}
 	} else if (button->state == Button::State::pressed && (++button->unPressedCount >= Button::triggerCount / Button::readingPeriod_ms)) {
 
@@ -357,19 +398,27 @@ void readButtons() {
 	using namespace Timing;
 	using namespace Game;
 
-	switch (state) {
-		case State::EntrySplash:
-		case State::Running:
-			for (auto& button : Buttons::All) readButton(button);
-			break;
-		case State::Paused:
-			readButton(&Buttons::bMiddle);
-			break;
-		case State::GameOver:
-			break;
-		default:
-			state = Game::State::Error; // Unhandled game state.
+	for (auto& button : Buttons::All) readButton(button);
+
+	// We set paused here so that it happens quickly.
+	if (lastDirectionPressed == Direction::MIDDLE && state == State::Running) {
+		state = State::Paused;
+		lastDirectionPressed = Direction::NONE;
 	}
+
+	// switch (state) {
+	// 	case State::EntrySplash:
+	// 	case State::Running:
+	// 		for (auto& button : Buttons::All) readButton(button);
+	// 		break;
+	// 	case State::Paused:
+	// 		readButton(&Buttons::bMiddle);
+	// 		break;
+	// 	case State::GameOver:
+	// 		break;
+	// 	default:
+	// 		state = Game::State::Error; // Unhandled game state.
+	// }
 }
 
 
@@ -377,13 +426,13 @@ void readButtons() {
 void resetGameParameters() {
 
 	lastDirectionPressed = Direction::NONE;
-	snake = SnakeType { }; 				// Create a new empty snake.
-	snake.push( World::getRandomPoint() ); // Put the snake in a random place.
+	snake = SnakeType { }; 					// Create a new empty snake.
+	snake.push( World::getRandomPoint() ); 	// Put the snake in a random place.
 
-	Score::current = 0;					// Reset the score.
+	Score::current = 0;						// Reset the score.
 	Timing::gameUpdateTime_ms = Timing::gameUpdateTimeOnReset_ms; // Reset game speed.
 
-	placeRandomScran();					// Place the food.
+	placeRandomScran();						// Place the food.
 }
 
 
@@ -394,7 +443,6 @@ void drawDisplayBackground() {
 
 	display.setTextSize(0);
 	display.setTextColor(WHITE);	
-	//display.fillRect(0, 0, Display::Width - 1, 8, BLACK);
 	
 	// draw scores
 	display.setCursor(2, 1);
@@ -413,9 +461,9 @@ void drawDisplayBackground() {
 	display.drawLine(0, 0, 0, 9, WHITE);
 	display.drawLine(dspRect.width() - 1, 0, dspRect.width() - 1, 9, WHITE);
 
-	display.fillRect(0, dspRect.height() - 3, dspRect.width() - 1, 3, WHITE);			// bottom border
-	display.fillRect(0, 9, 3, dspRect.height() - 1, WHITE); 						// left border
-	display.fillRect(dspRect.width() - 3, 9, 3, dspRect.height() - 1, WHITE); 		// right border    
+	display.fillRect(0, dspRect.height() - 3, dspRect.width() - 1, 3, WHITE);	// bottom border
+	display.fillRect(0, 9, 3, dspRect.height() - 1, WHITE); 					// left border
+	display.fillRect(dspRect.width() - 3, 9, 3, dspRect.height() - 1, WHITE); 	// right border    
 }
 
 
@@ -432,10 +480,11 @@ void updateGame() {
 // 8. - Update the display.
     
 	using namespace Display;
-	auto scranEaten {false};
+	auto scranEaten { false };
 
 // Update the Snake's direction from button input if not same or opposite direction.
 	DEBUG_PRINTLN(directionAsString(lastDirectionPressed));
+
 	if (lastDirectionPressed != snake.getDirection()) {
 		DEBUG_PRINTLN(directionAsString(~lastDirectionPressed));
 		if (lastDirectionPressed != ~snake.getDirection())
@@ -471,15 +520,14 @@ void updateGame() {
 			doGameOver();
 			return;
 		} else snake.push(newHead);
-		//DEBUG_PRINT_FLASH("Pushing head: "); DEBUG_PRINTLN(newHead);
 
 		scranEaten = detectPlayerAteScran();
 		
 		if (scranEaten) { // If eating tail stays put and only head advances.
 			drawUpdatedScore();
 		} else {
-	//		DEBUG_PRINTLN_FLASH("Popping");
 			auto removed = snake.pop();
+
 			// best place to remove the tail.
 			display.fillRect((removed.x * World::Scale) + World::xMinOffset, (removed.y * World::Scale) + World::yMinOffset, World::Scale, World::Scale, BLACK);
 		}
@@ -495,7 +543,7 @@ void doSplashScreen() {
 
 	using namespace Display;
 	Game::state = Game::State::EntrySplash;
-	display.clearDisplay();
+	clear();
 
 	while (Game::state == Game::State::EntrySplash) {
 
@@ -549,19 +597,23 @@ void drawScran() {
 
 	auto& d = Display::display;
 	using namespace World;
-	
 	d.drawRect ( ( scranPos.x * Scale ) + xMinOffset,
 				 ( scranPos.y * Scale ) + yMinOffset,
 				   Scale,
 				   Scale,
-				   WHITE
-				);
+				   WHITE );
+
+	// Circles just don't work.
+	// d.drawCircle(	( scranPos.x * Scale) + xMinOffset + (Scale / 2),
+	// 				( scranPos.y * Scale) + yMinOffset + (Scale / 2),
+	// 				Scale / 2,
+	// 				WHITE
+	// 			);
 }
 
 
 void drawSnake(bool wholeSnake) {
 
-	// Only draws what is changed.
 	using namespace World;
 	using namespace Display;
 
@@ -609,7 +661,7 @@ void drawUpdatedScore() {
 	display.print(Score::current);
 }
 
-// Split into 2 functions.
+
 void placeRandomScran() {
 
 	using namespace World;
@@ -626,9 +678,8 @@ void placeRandomScran() {
 void redrawAll() {
 
 	using namespace Display;
-	display.clearDisplay();
+	clear();
 	drawDisplayBackground();
-
 	drawScran();
 	drawSnake(true);
 	display.display();
@@ -682,16 +733,18 @@ bool detectPlayerOutOfArea(const PointType& newHead) {
 	else 
 		rVal = (( newHead.x >= World.maxX() ) || ( newHead.x < 0 ) || 
 				( newHead.y >= World.maxY() ) || ( newHead.y < 0 ));
+	
 	if (rVal) {
-		DEBUG_PRINT_FLASH("head pos: ");
-		PointType newHeadScaled { static_cast<uint8_t>(newHead.y / World::Scale), static_cast<uint8_t>(newHead.x / World::Scale) };
-		DEBUG_PRINTLN(newHeadScaled);
-		DEBUG_PRINT_FLASH("World min/max: ");
-		PointType WorldMin { World.minY(), World.minX() };
-		DEBUG_PRINT(WorldMin);
-		PointType WorldMax { World.maxY(), World.maxX() };
-		DEBUG_PRINT_FLASH(", ");
-		DEBUG_PRINTLN( WorldMax );
+
+		//DEBUG_PRINT_FLASH("head pos: ");
+		//PointType newHeadScaled { static_cast<uint8_t>(newHead.y / World::Scale), static_cast<uint8_t>(newHead.x / World::Scale) };
+		//DEBUG_PRINTLN(newHeadScaled);
+		//DEBUG_PRINT_FLASH("World min/max: ");
+		//PointType WorldMin { World.minY(), World.minX() };
+		//DEBUG_PRINT(WorldMin);
+		//PointType WorldMax { World.maxY(), World.maxX() };
+		//DEBUG_PRINT_FLASH(", ");
+		//DEBUG_PRINTLN( WorldMax );
 		DEBUG_PRINTLN_FLASH("Detected out of area");
 	}
 	return rVal;
@@ -731,7 +784,7 @@ void doGameOver() {
 	}
 	delay(350);
 
-	display.clearDisplay();
+	clear();
     display.setCursor(40, 30);
     display.setTextSize(1);
     
@@ -804,7 +857,13 @@ void doPaused() {
 	display.display();
 
 	// Wait while paused.
-	while(Game::state == Game::State::Paused) {}
+	while(Game::state == Game::State::Paused) {
+		if (lastDirectionPressed == Direction::MIDDLE) {
+			Game::state = Game::State::Running;
+			lastDirectionPressed = snake.getDirection();
+			break;
+		}
+	}
 
 	// Redraw everything.
 	display.setTextSize(1);
@@ -823,45 +882,40 @@ void doHighScore() {
 	using World::World;
 	using namespace Display;
 
-	auto clear{ [](){ Display::display.clearDisplay(); }};
-	auto drawFilledRect{ [](const Rectangle<Point<int16_t>>& r, uint16_t COLOUR = WHITE){ 
-		Display::display.fillRect(r.origin().x, r.origin().y, r.width(), r.height(), COLOUR); }};
-	auto drawRect{ [](const Rectangle<Point<int16_t>>& r, uint16_t COLOUR = WHITE) { Display::display.drawRect(r.origin().x, r.origin().y, r.width(), r.height(), COLOUR); }};
-	auto textBoundsRect { [](const char* text, int16_t y, int16_t x) {
-		
-		int16_t x1, y1;
-		uint16_t h, w;
-		display.getTextBounds(text, x, y, &x1, &y1, &w, &h);
-		return Rectangle<Point<int16_t>>{ {y1, x1}, { static_cast<int16_t>(h), static_cast<int16_t>(w) }};
-	} };
+// Control variables
+	enum class Stage { Waiting, Growing, DisplayText };
+	Stage stage { Stage::Waiting };
 
+// For the outer pattern.	
+	bool flipped { false };
+	SizeType growthSpeed { 3, 6 };
+	
+// The text to display.
+	display.setTextSize(3);
 	char text[6] { " New " };
-	bool flipped{false};
-	const SizeType growthSpeed { 3, 6 };
+	Rect textRect {};
+	const auto finalSize { getTextBoundsRect<Point<uint8_t>>("Score", 0, 0).grow(5, 6).size() };
+
+//	DEBUG_PRINTLN(finalSize);
+//	DEBUG_PRINTLN(textRect);
+	
 	clear();
 	display.display();
 	const auto startTime { millis() };
-	enum class Stage { Waiting, Growing, DisplayFirstText };
-	Stage stage { Stage::Waiting };
-	Rectangle<Point<uint8_t>> textRect {{0,0}};
-	display.setTextSize(3);
-	const auto finalSize { textBoundsRect("Score", 0, 0).grow(5, 6).size() };
-//	DEBUG_PRINTLN(finalSize);
-//	DEBUG_PRINTLN(textRect);
 
 	while (true) {
 
 		auto timeElapsed { millis() - startTime };
 		if (timeElapsed > 9000) break;
-		else if (timeElapsed > 5700) sprintf(text, "%u", Score::high);
+		else if (timeElapsed > 5600) sprintf(text, "%u", Score::high);
 		else if (timeElapsed > 4100) sprintf(text, "Score");
 		else if (timeElapsed > 3500) sprintf(text, "High");
-		else if (timeElapsed > 2800) stage = Stage::DisplayFirstText;
+		else if (timeElapsed > 2800) stage = Stage::DisplayText;
 		else if (timeElapsed > 1000) stage = Stage::Growing;
 
 
-		Rectangle<Point<int16_t>> rInner{{0, 0}};
-		Rectangle<Point<int16_t>> rOuter {{dspRect.height() >> 1, dspRect.width() >> 1}};
+		Rect rInner{};
+		Rect rOuter {{dspRect.height() >> 1, dspRect.width() >> 1}};
 
 		for (uint8_t i{0}; rOuter.width() <= dspRect.width(); ++i) {
 
@@ -871,11 +925,11 @@ void doHighScore() {
 			drawFilledRect(rOuter, flipped);
 			drawFilledRect(rInner, !flipped);
 
-			drawFilledRect(textRect, WHITE);
 			auto outline { textRect };
-			drawRect(outline, BLACK);
+			drawRndRect(outline, 7, BLACK);
 			outline.grow(-1);
-			drawRect(outline, BLACK);
+			drawRndRect(outline, 7, BLACK);
+			drawRndFilledRect(textRect, 5);
 
 			rInner.grow(growthSpeed.y, growthSpeed.x);
 			rOuter.grow(growthSpeed.y, growthSpeed.x);
@@ -894,10 +948,12 @@ void doHighScore() {
 						DEBUG_PRINTLN(textRect);
 					}
 					break;
-				case Stage::DisplayFirstText: {
+				case Stage::DisplayText: {
+
 						display.setTextColor(BLACK);
-						auto bounds { textBoundsRect(text, 0,0) };
+						auto bounds { getTextBoundsRect<Point<uint8_t>>(text, 0,0) };
 						bounds.centreOn(dspRect);
+
 						display.setCursor(bounds.origin().x, bounds.origin().y);
 						display.write(text);
 						break;
@@ -922,15 +978,16 @@ const __FlashStringHelper* directionAsString(Direction d) {
 		case Direction::LEFT: 	return F("Left"); break;
 		case Direction::RIGHT: 	return F("Right"); break;
 		case Direction::NONE: 	return F("None"); break;
+		case Direction::MIDDLE: return F("Middle"); break;
 		default:				return F("Error");
 	}
 }
 
-const __FlashStringHelper* stateToString(Game::State g) {
+const __FlashStringHelper* stateAsString(Game::State s) {
 
 	using namespace Game;
 	
-	switch (g) {
+	switch (s) {
 		case State::EntrySplash: 	return F("Entry"); break;
 		case State::Paused:			return F("Pause"); break;
 		case State::Running:		return F("Run"); break;

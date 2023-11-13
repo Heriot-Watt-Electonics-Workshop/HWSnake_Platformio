@@ -78,6 +78,7 @@ private:
 	PointT mOrigin;
 	SizeT mSize;
 public:
+	constexpr Rectangle() : mOrigin{PointT{0,0}}, mSize{PointT{0,0}} {}
 	constexpr Rectangle(DataT y, DataT x, DataT height, DataT width) : mOrigin{y, x}, mSize{height, width} {}
 	constexpr Rectangle(const PointT& tl, const PointT& tr, const PointT& bl, const PointT& br) : mOrigin{tl.y, tl.x}, mSize{ bl.y - tl.y, tr.x - tl.x } {} 
 	constexpr Rectangle(const PointT& origin, const SizeT& size) : mOrigin{origin}, mSize{size} {}

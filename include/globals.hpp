@@ -9,16 +9,16 @@
 
 // This switches on or off serial debug output.
 #define DEBUG NO // or NO
-#define LIVE_ERRORS YES
+#define LIVE_ERRORS NO
 
 // Write yes to remove the high score.
-#define CLEAR_HIGH_SCORE YES
+#define CLEAR_HIGH_SCORE NO
 
 // This determines the size of the array used to store the snake.  The
 // snake may be 4 times this size + 1 for the head.  Maximum if all spaces 
 // were in the snake would be 160 sections so 40 bytes of data should be enough.
 #if (DEBUG == YES)
-constexpr uint8_t SNAKE_DATA_SIZE { 5 };
+constexpr uint8_t SNAKE_DATA_SIZE { 4 };
 #elif (DEBUG == NO)
 constexpr uint8_t SNAKE_DATA_SIZE { 40 };
 #endif
@@ -60,16 +60,16 @@ using Rect = Rectangle<PointType>;
 
 namespace Utility {
 
-#if (DEBUG == YES)
-// This class allows to print any integer type in binary format.
-//  It is here to aid in debugging. 
-template<typename T>
-struct Binary : public Printable {
-    T value;
-	constexpr Binary(T value) : value{value} { } 
-	size_t printTo(Print& p) const;
-};
-#endif // (DEBUG == YES)
+// #if (DEBUG == YES)
+// // This class allows to print any integer type in binary format.
+// //  It is here to aid in debugging. 
+// template<typename T>
+// struct Binary : public Printable {
+//     T value;
+// 	constexpr Binary(T value) : value{value} { } 
+// 	size_t printTo(Print& p) const;
+// };
+// #endif // (DEBUG == YES)
 
 }
 
@@ -117,9 +117,10 @@ namespace World {
 
 // All the directions you need.
 // First 4 directions are reversible if bits are reversed.
+// Middle is for middle button.
 // ie UP is 0b00 and down is 0b11.
 enum class Direction : uint8_t {
-    UP = 0, LEFT, RIGHT, DOWN, NONE
+    UP = 0, LEFT, RIGHT, DOWN, NONE, MIDDLE
 };
 
 // Flipping the bits reverses the Direction.

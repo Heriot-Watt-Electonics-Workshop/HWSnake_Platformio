@@ -7,6 +7,7 @@
 #include "error.hpp"
 
 
+
 // // Split boolean value return type.
 // template <typename T>
 // struct OptionalCOORD {
@@ -14,6 +15,7 @@
 // 	T val;
 // };
 
+// Optional wrapper for a point. ie it may or may not contain data.
 template <typename DATA_TYPE>
 struct OptionalPoint : protected Point<DATA_TYPE> {
 private:
